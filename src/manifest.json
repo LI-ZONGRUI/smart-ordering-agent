@@ -1,0 +1,15 @@
+{
+  "name": "微信点餐",
+  "appid": "",
+  "description": "Vue3 + uni-app 微信点餐小程序基础项目",
+  "versionName": "0.1.0",
+  "versionCode": "100",
+  "vueVersion": "3",
+  "mp-weixin": {
+    "appid": "",
+    "usingComponents": true
+  },
+  "uniStatistics": {
+    "enable": false
+  }
+}
