@@ -1,8 +1,8 @@
-# 微信点餐小程序：uniCloud 菜单与订单
+# 微信点餐小程序：云端点餐与 LLM 智能推荐
 
 本项目使用 Vue 3、uni-app CLI、Composition API 和 Pinia。首页、菜单、购物车、订单、我的五个 TabBar 页面保持原有结构。菜单和订单现已改为调用 uniCloud 云对象；购物车仍保存在本次运行的 Pinia 内存中。
 
-**当前状态：uniCloud 阶段已完成真实环境人工验证。** 服务空间已关联，`menu` / `orders` 云对象已部署，`categories` / `dishes` / `orders` 云数据库已初始化。
+**当前状态：uniCloud 点餐闭环与第三阶段 LLM 智能点餐 V1 均已完成真实环境人工验收。** 服务空间已关联，`menu` / `orders` 云对象已部署，`categories` / `dishes` / `orders` 云数据库已初始化。
 
 已完成并验证：
 
@@ -11,6 +11,36 @@
 - 云端订单：真实下单成功，数据库中可以看到订单记录。
 - 后端重新校验菜品状态和数据库价格，计算金额，并保存下单时的订单快照。
 - 匿名 `clientId` 隔离与云端订单持久化；关闭并重新打开小程序后，历史订单仍可查看。
+
+## 第三阶段：LLM 智能点餐 V1
+
+已接入 Alibaba Cloud Model Studio 的 Qwen3.8-Flash，通过 OpenAI-compatible Chat Completions API 调用。用户从首页“AI 智能点餐”进入推荐页，输入一句自然语言需求，获得 1～3 道真实菜品；无法满足时显示明确说明。
+
+推荐流程：
+
+1. 前端 `src/services/ai.js` 调用 uniCloud `ai.recommend(message)`，校验输入为 1～200 字。
+2. 后端读取真实 `dishes` 云数据库，将在售菜品的必要字段作为模型上下文。
+3. 使用 Structured JSON 输出，模型只返回 `dishIds` 和推荐理由；后端解析并检查结构，执行 dishId 白名单校验、去重和数量限制。
+4. 返回前再次查询数据库，二次校验售罄状态并重新读取价格。菜品名称、图片、配料等展示字段来自数据库；后端按分汇总并计算 `totalPrice`，不采信模型返回的价格。
+5. 推荐菜品加购前刷新状态，复用现有 Pinia `cartStore.addDish()`；订单仍走原有确认和后端校价流程。
+
+**LLM 负责语义理解和推荐决策；数据库和 uniCloud 负责事实、状态、价格和业务规则。** 常见数字预算和明确食材排除有额外后端校验，复杂口味偏好仍由模型理解。当前版本是单轮推荐，不是 RAG，也不是 Agent；没有多轮对话、工具执行或聊天历史数据库。
+
+API Key 仅通过云对象运行环境中的 `DASHSCOPE_API_KEY` 读取；`LLM_BASE_URL` 和 `LLM_MODEL` 也从环境变量读取。真实密钥不写入源码或前端，不打印 Authorization 请求头或原始敏感请求。`.env` 等本地配置继续由 `.gitignore` 忽略。`testConnection()` 保留作为手动连通诊断方法，任何页面均不自动调用。
+
+已由开发者通过真实 Qwen3.8-Flash + uniCloud 完成以下五组人工验收，结果符合预期：
+
+- “我想吃辣一点的，50元以内，不要牛肉”
+- “随便推荐点清淡的”
+- “我预算只有1元”
+- “给我推荐宫保鸡丁”
+- “我想吃辣的，不要牛肉，再来个饮料，预算50元”
+
+本地回归测试使用模拟接口验证边界与错误处理，不调用真实模型，不使用真实密钥：
+
+```bash
+node --test tests/ai-recommend.test.cjs
+```
 
 新环境部署可参考 [新手部署步骤](docs/UNICLOUD_SETUP.md)。
 
@@ -22,16 +52,19 @@
 │   ├── constants/dish.js           辣度文案
 │   ├── mock/                       原有数据，保留作初始化来源与开发参考
 │   ├── services/                   页面调用云对象的入口
+│   │   ├── ai.js                   智能推荐调用与友好错误
 │   │   ├── clientId.js
 │   │   ├── menu.js
 │   │   └── orders.js
 │   ├── stores/                     Pinia 购物车与云端订单列表缓存
-│   └── pages/                      原有七个页面
+│   └── pages/                      八个页面（含 ai-recommend，TabBar 仍为五项）
 ├── uniCloud-aliyun/
 │   ├── cloudfunctions/
+│   │   ├── ai/                      testConnection、recommend
 │   │   ├── menu/                    getCategories、getDishes
 │   │   └── orders/                  createOrder、getOrders
 │   └── database/                    三个 collection 的 schema、索引和示例数据
+├── tests/ai-recommend.test.cjs     AI 推荐回归测试
 └── docs/UNICLOUD_SETUP.md          HBuilderX 人工部署与验证步骤
 ```
 

@@ -10,6 +10,7 @@
 
 <script setup>
 // 本阶段不请求用户信息，也不接入登录服务。
+
 </script>
 
 <style scoped>

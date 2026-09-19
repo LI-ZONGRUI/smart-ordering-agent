@@ -7,6 +7,12 @@
     </view>
 
     <view class="card">
+      <view class="section-title">AI 智能点餐</view>
+      <text class="muted">说说预算和口味，从当前在售菜品中获得推荐。</text>
+      <button class="primary-button menu-button" @click="goToAi">AI 智能点餐</button>
+    </view>
+
+    <view class="card">
       <view class="section-title">现在可以体验</view>
       <text class="muted">浏览云端菜品、加入购物车、提交订单，再到订单页查看记录。</text>
     </view>
@@ -14,6 +20,10 @@
 </template>
 
 <script setup>
+function goToAi() {
+  uni.navigateTo({ url: '/pages/ai-recommend/index' })
+}
+
 function goToMenu() {
   // TabBar 页面要用 switchTab 跳转。
   uni.switchTab({ url: '/pages/menu/index' })
