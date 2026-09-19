@@ -12,6 +12,7 @@
     </view>
 
     <template v-else>
+      <view v-if="refreshError" class="unavailable-tip">{{ refreshError }}</view>
       <view v-for="item in items" :key="item.id" class="card cart-item">
         <view class="item-top">
           <view>
@@ -54,12 +55,26 @@
 </template>
 
 <script setup>
+import { ref } from 'vue'
 import { storeToRefs } from 'pinia'
+import { onShow } from '@dcloudio/uni-app'
+import { getDishes } from '../../services/menu'
 import { useCartStore } from '../../stores/cart'
 
 const cartStore = useCartStore()
 // 从 store 中取出响应式状态时使用 storeToRefs，避免失去响应性。
 const { items, itemCount, totalPrice, hasUnavailableItems } = storeToRefs(cartStore)
+const refreshError = ref('')
+
+onShow(async () => {
+  if (itemCount.value === 0) return
+  try {
+    refreshError.value = ''
+    cartStore.syncDishes(await getDishes())
+  } catch (error) {
+    refreshError.value = '暂时无法更新菜品状态，提交订单时云端会再次检查。'
+  }
+})
 
 function goToMenu() {
   uni.switchTab({ url: '/pages/menu/index' })

@@ -8,7 +8,7 @@
     <view class="menu-body">
       <scroll-view scroll-y class="category-scroll">
         <view
-          v-for="category in sortedCategories"
+          v-for="category in categories"
           :key="category.id"
           class="category-item"
           :class="{ active: selectedCategoryId === category.id }"
@@ -18,37 +18,45 @@
         </view>
       </scroll-view>
 
-      <!-- 切换分类时，让右侧列表滚回当前分类的标题。 -->
       <scroll-view scroll-y class="dish-scroll" :scroll-into-view="`dish-top-${selectedCategoryId}`">
-        <view :id="`dish-top-${selectedCategoryId}`" class="category-heading">
-          {{ selectedCategory.name }}
+        <view v-if="loading" class="empty-state">正在加载菜品...</view>
+        <view v-else-if="loadError" class="empty-state">
+          <view>{{ loadError }}</view>
+          <button size="mini" class="retry-button" @click="loadMenu">重试</button>
         </view>
+        <template v-else>
+          <!-- 切换分类时，让右侧列表滚回当前分类的标题。 -->
+          <view v-if="selectedCategory" :id="`dish-top-${selectedCategoryId}`" class="category-heading">
+            {{ selectedCategory.name }}
+          </view>
 
-        <view v-if="visibleDishes.length === 0" class="empty-state">当前分类暂无菜品</view>
+          <view v-if="categories.length === 0" class="empty-state">暂无分类，请先初始化云数据库</view>
+          <view v-else-if="visibleDishes.length === 0" class="empty-state">当前分类暂无菜品</view>
 
-        <view
-          v-for="dish in visibleDishes"
-          :key="dish.id"
-          class="dish-card"
-          @click="openDetail(dish)"
-        >
-          <image class="dish-image" :src="dish.image" mode="aspectFill" />
-          <view class="dish-info">
-            <view class="dish-name">{{ dish.name }}</view>
-            <view class="dish-description">{{ dish.description }}</view>
-            <view class="dish-meta">月售 {{ dish.sales }} · {{ spicyText(dish.spicyLevel) }}</view>
-            <view class="dish-bottom">
-              <text class="price">¥{{ dish.price.toFixed(2) }}</text>
-              <text v-if="dish.status === 'sold_out'" class="sold-out">已售罄</text>
-              <button
-                v-else
-                size="mini"
-                class="add-button"
-                @click.stop="addToCart(dish)"
-              >+</button>
+          <view
+            v-for="dish in visibleDishes"
+            :key="dish.id"
+            class="dish-card"
+            @click="openDetail(dish)"
+          >
+            <image class="dish-image" :src="dish.image" mode="aspectFill" />
+            <view class="dish-info">
+              <view class="dish-name">{{ dish.name }}</view>
+              <view class="dish-description">{{ dish.description }}</view>
+              <view class="dish-meta">月售 {{ dish.sales }} · {{ spicyText(dish.spicyLevel) }}</view>
+              <view class="dish-bottom">
+                <text class="price">¥{{ dish.price.toFixed(2) }}</text>
+                <text v-if="dish.status === 'sold_out'" class="sold-out">已售罄</text>
+                <button
+                  v-else
+                  size="mini"
+                  class="add-button"
+                  @click.stop="addToCart(dish)"
+                >+</button>
+              </view>
             </view>
           </view>
-        </view>
+        </template>
       </scroll-view>
     </view>
   </view>
@@ -56,25 +64,52 @@
 
 <script setup>
 import { computed, ref } from 'vue'
-import { categories } from '../../mock/categories'
-import { dishes, spicyLevelLabels } from '../../mock/dishes'
+import { onShow } from '@dcloudio/uni-app'
+import { spicyLevelLabels } from '../../constants/dish'
+import { getCategories, getDishes } from '../../services/menu'
 import { useCartStore } from '../../stores/cart'
 
 const cartStore = useCartStore()
-const sortedCategories = [...categories].sort((a, b) => a.sort - b.sort)
-const selectedCategoryId = ref(sortedCategories[0].id)
+const categories = ref([])
+const dishes = ref([])
+const selectedCategoryId = ref('')
+const loading = ref(false)
+const loadError = ref('')
 
 const selectedCategory = computed(() =>
-  sortedCategories.find((category) => category.id === selectedCategoryId.value)
+  categories.value.find((category) => category.id === selectedCategoryId.value)
 )
 
 const visibleDishes = computed(() => {
   // “推荐”按 recommended 标记筛选；其他分类按菜品的 categoryId 筛选。
   if (selectedCategoryId.value === 'recommended') {
-    return dishes.filter((dish) => dish.recommended && dish.status === 'on_sale')
+    return dishes.value.filter((dish) => dish.recommended && dish.status === 'on_sale')
   }
-  return dishes.filter((dish) => dish.categoryId === selectedCategoryId.value)
+  return dishes.value.filter((dish) => dish.categoryId === selectedCategoryId.value)
 })
+
+onShow(loadMenu)
+
+async function loadMenu() {
+  loading.value = true
+  loadError.value = ''
+  try {
+    const [categoriesResult, dishesResult] = await Promise.all([getCategories(), getDishes()])
+
+    categories.value = categoriesResult
+    dishes.value = dishesResult
+
+    cartStore.syncDishes(dishesResult)
+    if (!categoriesResult.some((category) => category.id === selectedCategoryId.value)) {
+      selectedCategoryId.value = categoriesResult[0]?.id || ''
+    }
+  } catch (error) {
+    console.error('[menu] load failed:', error)
+    loadError.value = error?.message || '云端菜单加载失败，请稍后重试'
+  } finally {
+    loading.value = false
+  }
+}
 
 function selectCategory(categoryId) {
   selectedCategoryId.value = categoryId
@@ -241,5 +276,9 @@ function addToCart(dish) {
   padding: 48rpx 0;
   color: #879388;
   text-align: center;
+}
+
+.retry-button {
+  margin-top: 22rpx;
 }
 </style>

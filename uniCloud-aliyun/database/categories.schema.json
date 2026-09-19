@@ -1,0 +1,10 @@
+{
+  "bsonType": "object",
+  "required": ["name", "sort"],
+  "permission": { "read": false, "create": false, "update": false, "delete": false },
+  "properties": {
+    "_id": { "bsonType": "string", "description": "分类 ID" },
+    "name": { "bsonType": "string", "description": "分类名称" },
+    "sort": { "bsonType": "int", "description": "排序数字，越小越靠前" }
+  }
+}

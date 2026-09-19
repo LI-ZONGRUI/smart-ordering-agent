@@ -1,5 +1,11 @@
 <script setup>
-// 应用级样式放在这里；具体页面逻辑分别写在 pages 目录中。
+import { onLaunch } from '@dcloudio/uni-app'
+import { getClientId } from './services/clientId'
+
+onLaunch(() => {
+  // 首次启动生成匿名 clientId，并存到本地；重新打开小程序会继续使用同一个值。
+  getClientId()
+})
 </script>
 
 <style>

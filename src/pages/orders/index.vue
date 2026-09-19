@@ -2,15 +2,20 @@
   <view class="page">
     <view class="section-title">我的订单</view>
 
-    <view v-if="orders.length === 0" class="card empty-state">
+    <view v-if="loading" class="card empty-state">正在加载订单...</view>
+    <view v-else-if="loadError" class="card empty-state">
+      <text>{{ loadError }}</text>
+      <button size="mini" class="primary-button" @click="loadOrders">重试</button>
+    </view>
+    <view v-else-if="orders.length === 0" class="card empty-state">
       <text>暂无订单</text>
       <text class="muted">去菜单挑选喜欢的菜品吧。</text>
       <button size="mini" class="primary-button" @click="goToMenu">去菜单</button>
     </view>
 
-    <view v-for="order in orders" :key="order.id" class="card order-card">
+    <view v-for="order in orders" :key="order._id" class="card order-card">
       <view class="order-heading">
-        <text class="order-id">订单号 {{ order.id }}</text>
+        <text class="order-id">订单号 {{ order.orderNo }}</text>
         <text class="status">{{ statusText(order.status) }}</text>
       </view>
       <view class="muted order-time">下单时间 {{ formatTime(order.createTime) }}</view>
@@ -25,11 +30,31 @@
 </template>
 
 <script setup>
+import { ref } from 'vue'
 import { storeToRefs } from 'pinia'
+import { onShow } from '@dcloudio/uni-app'
+import { getOrders } from '../../services/orders'
 import { orderStatusLabels, useOrdersStore } from '../../stores/orders'
 
 const ordersStore = useOrdersStore()
 const { orders } = storeToRefs(ordersStore)
+const loading = ref(false)
+const loadError = ref('')
+
+onShow(loadOrders)
+
+async function loadOrders() {
+  loading.value = true
+  loadError.value = ''
+  try {
+    // 每次打开订单 Tab 都重新读取云数据库，重启小程序也能看到历史订单。
+    ordersStore.setOrders(await getOrders())
+  } catch (error) {
+    loadError.value = error?.message || '云端订单加载失败，请稍后重试'
+  } finally {
+    loading.value = false
+  }
+}
 
 function statusText(status) {
   // 目前新订单都是 pending；其他状态先准备好显示文案。

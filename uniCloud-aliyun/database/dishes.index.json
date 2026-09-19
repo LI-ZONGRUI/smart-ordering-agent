@@ -1,0 +1,10 @@
+[
+  {
+    "IndexName": "category_id_asc",
+    "MgoKeySchema": {
+      "MgoIndexKeys": [{ "Name": "categoryId", "Direction": "1" }],
+      "MgoIsUnique": false,
+      "MgoIsSparse": false
+    }
+  }
+]

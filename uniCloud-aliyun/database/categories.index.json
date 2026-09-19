@@ -1,0 +1,10 @@
+[
+  {
+    "IndexName": "sort_asc",
+    "MgoKeySchema": {
+      "MgoIndexKeys": [{ "Name": "sort", "Direction": "1" }],
+      "MgoIsUnique": false,
+      "MgoIsSparse": false
+    }
+  }
+]

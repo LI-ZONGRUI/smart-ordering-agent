@@ -1,0 +1,20 @@
+{
+  "bsonType": "object",
+  "required": ["name", "categoryId", "description", "price", "image", "sales", "spicyLevel", "ingredients", "status", "recommended", "createTime", "updateTime"],
+  "permission": { "read": false, "create": false, "update": false, "delete": false },
+  "properties": {
+    "_id": { "bsonType": "string", "description": "菜品 ID" },
+    "name": { "bsonType": "string" },
+    "categoryId": { "bsonType": "string", "description": "对应 categories._id；推荐分类只用 recommended 标记" },
+    "description": { "bsonType": "string" },
+    "price": { "bsonType": "double", "minimum": 0, "description": "单价，单位元" },
+    "image": { "bsonType": "string", "description": "当前示例使用小程序本地 /static 图片路径" },
+    "sales": { "bsonType": "int", "minimum": 0 },
+    "spicyLevel": { "bsonType": "int", "minimum": 0, "maximum": 5 },
+    "ingredients": { "bsonType": "array", "arrayType": "string" },
+    "status": { "bsonType": "string", "enum": ["on_sale", "sold_out"] },
+    "recommended": { "bsonType": "bool" },
+    "createTime": { "bsonType": "timestamp" },
+    "updateTime": { "bsonType": "timestamp" }
+  }
+}

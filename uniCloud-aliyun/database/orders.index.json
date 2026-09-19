@@ -1,0 +1,21 @@
+[
+  {
+    "IndexName": "client_time_desc",
+    "MgoKeySchema": {
+      "MgoIndexKeys": [
+        { "Name": "clientId", "Direction": "1" },
+        { "Name": "createTime", "Direction": "-1" }
+      ],
+      "MgoIsUnique": false,
+      "MgoIsSparse": false
+    }
+  },
+  {
+    "IndexName": "order_no_unique",
+    "MgoKeySchema": {
+      "MgoIndexKeys": [{ "Name": "orderNo", "Direction": "1" }],
+      "MgoIsUnique": true,
+      "MgoIsSparse": false
+    }
+  }
+]

@@ -47,7 +47,8 @@
   </view>
 
   <view v-else class="page missing-state">
-    <text>菜品不存在</text>
+    <text>{{ loading ? '正在加载菜品...' : loadError || '菜品不存在' }}</text>
+    <button v-if="!loading && loadError" class="primary-button" @click="loadDish">重试</button>
     <button class="primary-button" @click="goToMenu">返回菜单</button>
   </view>
 </template>
@@ -55,18 +56,36 @@
 <script setup>
 import { computed, ref } from 'vue'
 import { onLoad } from '@dcloudio/uni-app'
-import { dishes, spicyLevelLabels } from '../../mock/dishes'
+import { spicyLevelLabels } from '../../constants/dish'
+import { getDishes } from '../../services/menu'
 import { useCartStore } from '../../stores/cart'
 
 const cartStore = useCartStore()
 const dish = ref(null)
 const quantity = ref(1)
+const loading = ref(true)
+const loadError = ref('')
+let dishId = ''
 
 onLoad((options) => {
-  // 页面 URL 传来的是字符串 id，先转成数字，再从模拟数据中查找。
-  const dishId = Number(options.id)
-  dish.value = dishes.find((item) => item.id === dishId) || null
+  dishId = String(options?.id || '')
+  loadDish()
 })
+
+async function loadDish() {
+  loading.value = true
+  loadError.value = ''
+  dish.value = null
+  try {
+    const dishes = await getDishes()
+    // URL 只传 _id，详情内容仍从云端获取。
+    dish.value = dishes.find((item) => item.id === dishId) || null
+  } catch (error) {
+    loadError.value = error?.message || '云端菜品加载失败'
+  } finally {
+    loading.value = false
+  }
+}
 
 const spicyText = computed(() =>
   dish.value ? spicyLevelLabels[dish.value.spicyLevel] || '辣度未标注' : ''

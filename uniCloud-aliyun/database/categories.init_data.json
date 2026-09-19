@@ -1,0 +1,27 @@
+[
+  {
+    "_id": "recommended",
+    "name": "推荐",
+    "sort": 1
+  },
+  {
+    "_id": "hot",
+    "name": "热菜",
+    "sort": 2
+  },
+  {
+    "_id": "cold",
+    "name": "凉菜",
+    "sort": 3
+  },
+  {
+    "_id": "staple",
+    "name": "主食",
+    "sort": 4
+  },
+  {
+    "_id": "drink",
+    "name": "饮料",
+    "sort": 5
+  }
+]

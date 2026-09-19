@@ -2,7 +2,7 @@
   <view class="page confirm-page">
     <view class="section-title">确认订单</view>
 
-    <view v-if="submitting" class="card success-state">
+    <view v-if="submitted" class="card success-state">
       订单提交成功，正在前往订单列表...
     </view>
 
@@ -58,33 +58,33 @@
 import { ref } from 'vue'
 import { storeToRefs } from 'pinia'
 import { useCartStore } from '../../stores/cart'
-import { useOrdersStore } from '../../stores/orders'
+import { createOrder } from '../../services/orders'
 
 const cartStore = useCartStore()
-const ordersStore = useOrdersStore()
 const { items, itemCount, totalPrice, hasUnavailableItems } = storeToRefs(cartStore)
 const remark = ref('')
 const submitting = ref(false)
+const submitted = ref(false)
 
-function submitOrder(event) {
+async function submitOrder(event) {
   if (submitting.value || itemCount.value === 0 || hasUnavailableItems.value) return
   submitting.value = true
 
   // form 提交时读取备注，可拿到用户点击按钮前输入的最新内容。
   const formRemark = event.detail.value.remark
   const submittedRemark = String(formRemark === undefined ? remark.value : formRemark).trim()
-  const order = ordersStore.createOrder(items.value, submittedRemark)
-  if (!order) {
+  try {
+    // 这里只传 dishId、quantity、备注；前端显示的价格不能成为订单金额的依据。
+    await createOrder(items.value, submittedRemark)
+    // 只有数据库写入成功后才清空购物车，失败时保留商品供用户重试。
+    cartStore.clearCart()
+    submitted.value = true
+    uni.showToast({ title: '下单成功', icon: 'success', duration: 1200 })
+    setTimeout(() => uni.switchTab({ url: '/pages/orders/index' }), 1200)
+  } catch (error) {
+    uni.showToast({ title: error?.message || '提交失败，请稍后重试', icon: 'none' })
     submitting.value = false
-    return
   }
-
-  // 订单 store 已保存独立明细，清空购物车不会影响刚生成的订单。
-  cartStore.clearCart()
-  uni.showToast({ title: '下单成功', icon: 'success', duration: 1200 })
-  setTimeout(() => {
-    uni.switchTab({ url: '/pages/orders/index' })
-  }, 1200)
 }
 
 function goToCart() {

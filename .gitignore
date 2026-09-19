@@ -6,5 +6,8 @@ unpackage/
 .env.*
 .Rhistory
 !.env.example
-.Rhistory
-!.env.example
+
+# HBuilderX / uniCloud 本机绑定信息和云对象本地依赖
+.hbuilderx/
+uniCloud-aliyun/spaceinfo.json
+uniCloud-aliyun/cloudfunctions/**/node_modules/

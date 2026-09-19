@@ -1,0 +1,16 @@
+{
+  "bsonType": "object",
+  "required": ["orderNo", "items", "totalPrice", "totalCount", "remark", "status", "clientId", "createTime"],
+  "permission": { "read": false, "create": false, "update": false, "delete": false },
+  "properties": {
+    "_id": { "bsonType": "string", "description": "数据库自动生成" },
+    "orderNo": { "bsonType": "string", "description": "供用户查看的订单号" },
+    "items": { "bsonType": "array", "arrayType": "object", "description": "下单快照：dishId、name、price、quantity、subtotal；云对象逐项生成" },
+    "totalPrice": { "bsonType": "double" },
+    "totalCount": { "bsonType": "int" },
+    "remark": { "bsonType": "string" },
+    "status": { "bsonType": "string", "enum": ["pending", "preparing", "completed", "cancelled"] },
+    "clientId": { "bsonType": "string", "description": "开发阶段的匿名隔离标记，不是认证" },
+    "createTime": { "bsonType": "timestamp" }
+  }
+}

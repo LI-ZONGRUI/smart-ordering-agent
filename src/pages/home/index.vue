@@ -2,13 +2,13 @@
   <view class="page">
     <view class="card welcome-card">
       <text class="title">欢迎点餐</text>
-      <text class="welcome-copy">这是微信点餐小程序的基础项目。</text>
+      <text class="welcome-copy">从云端菜单挑选菜品，完成点餐。</text>
       <button class="primary-button menu-button" @click="goToMenu">浏览菜单</button>
     </view>
 
     <view class="card">
       <view class="section-title">现在可以体验</view>
-      <text class="muted">查看模拟菜品、加入购物车，并通过底部导航切换页面。</text>
+      <text class="muted">浏览云端菜品、加入购物车、提交订单，再到订单页查看记录。</text>
     </view>
   </view>
 </template>
