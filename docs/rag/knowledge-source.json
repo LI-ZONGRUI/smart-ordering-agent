@@ -1,0 +1,469 @@
+[
+  {
+    "knowledgeId": "dish-1-description",
+    "scope": "dish",
+    "dishId": "dish-1",
+    "type": "description",
+    "title": "招牌鸡腿饭：菜品介绍",
+    "text": "招牌鸡腿饭由鸡腿搭配米饭和时蔬。",
+    "sourceType": "project-data",
+    "sourceFields": [
+      {
+        "file": "uniCloud-aliyun/database/dishes.init_data.json",
+        "recordId": "dish-1",
+        "fields": [
+          "_id",
+          "name",
+          "description"
+        ]
+      }
+    ],
+    "verified": true,
+    "sourceVersion": 1
+  },
+  {
+    "knowledgeId": "dish-1-taste",
+    "scope": "dish",
+    "dishId": "dish-1",
+    "type": "taste",
+    "title": "招牌鸡腿饭：风味或口感",
+    "text": "招牌鸡腿饭中的鸡腿，项目描述为“酱香”。",
+    "sourceType": "project-data",
+    "sourceFields": [
+      {
+        "file": "uniCloud-aliyun/database/dishes.init_data.json",
+        "recordId": "dish-1",
+        "fields": [
+          "_id",
+          "name",
+          "description"
+        ]
+      }
+    ],
+    "verified": true,
+    "sourceVersion": 1
+  },
+  {
+    "knowledgeId": "dish-1-ingredients",
+    "scope": "dish",
+    "dishId": "dish-1",
+    "type": "ingredients",
+    "title": "招牌鸡腿饭：主要配料",
+    "text": "招牌鸡腿饭记录的主要配料为：鸡腿、米饭、西兰花。",
+    "sourceType": "project-data",
+    "sourceFields": [
+      {
+        "file": "uniCloud-aliyun/database/dishes.init_data.json",
+        "recordId": "dish-1",
+        "fields": [
+          "_id",
+          "name",
+          "ingredients"
+        ]
+      }
+    ],
+    "verified": true,
+    "sourceVersion": 1
+  },
+  {
+    "knowledgeId": "dish-2-description",
+    "scope": "dish",
+    "dishId": "dish-2",
+    "type": "description",
+    "title": "番茄牛肉面：菜品介绍",
+    "text": "番茄牛肉面使用番茄汤底，搭配牛肉。",
+    "sourceType": "project-data",
+    "sourceFields": [
+      {
+        "file": "uniCloud-aliyun/database/dishes.init_data.json",
+        "recordId": "dish-2",
+        "fields": [
+          "_id",
+          "name",
+          "description"
+        ]
+      }
+    ],
+    "verified": true,
+    "sourceVersion": 1
+  },
+  {
+    "knowledgeId": "dish-2-taste",
+    "scope": "dish",
+    "dishId": "dish-2",
+    "type": "taste",
+    "title": "番茄牛肉面：风味或口感",
+    "text": "番茄牛肉面的番茄汤底，项目描述为“酸甜”。",
+    "sourceType": "project-data",
+    "sourceFields": [
+      {
+        "file": "uniCloud-aliyun/database/dishes.init_data.json",
+        "recordId": "dish-2",
+        "fields": [
+          "_id",
+          "name",
+          "description"
+        ]
+      }
+    ],
+    "verified": true,
+    "sourceVersion": 1
+  },
+  {
+    "knowledgeId": "dish-2-ingredients",
+    "scope": "dish",
+    "dishId": "dish-2",
+    "type": "ingredients",
+    "title": "番茄牛肉面：主要配料",
+    "text": "番茄牛肉面记录的主要配料为：牛肉、番茄、面条、青菜。",
+    "sourceType": "project-data",
+    "sourceFields": [
+      {
+        "file": "uniCloud-aliyun/database/dishes.init_data.json",
+        "recordId": "dish-2",
+        "fields": [
+          "_id",
+          "name",
+          "ingredients"
+        ]
+      }
+    ],
+    "verified": true,
+    "sourceVersion": 1
+  },
+  {
+    "knowledgeId": "dish-3-description",
+    "scope": "dish",
+    "dishId": "dish-3",
+    "type": "description",
+    "title": "鲜蔬沙拉：菜品介绍",
+    "text": "鲜蔬沙拉由蔬菜拌油醋汁。",
+    "sourceType": "project-data",
+    "sourceFields": [
+      {
+        "file": "uniCloud-aliyun/database/dishes.init_data.json",
+        "recordId": "dish-3",
+        "fields": [
+          "_id",
+          "name",
+          "description"
+        ]
+      }
+    ],
+    "verified": true,
+    "sourceVersion": 1
+  },
+  {
+    "knowledgeId": "dish-3-taste",
+    "scope": "dish",
+    "dishId": "dish-3",
+    "type": "taste",
+    "title": "鲜蔬沙拉：风味或口感",
+    "text": "鲜蔬沙拉，项目描述为“清爽”。",
+    "sourceType": "project-data",
+    "sourceFields": [
+      {
+        "file": "uniCloud-aliyun/database/dishes.init_data.json",
+        "recordId": "dish-3",
+        "fields": [
+          "_id",
+          "name",
+          "description"
+        ]
+      }
+    ],
+    "verified": true,
+    "sourceVersion": 1
+  },
+  {
+    "knowledgeId": "dish-3-ingredients",
+    "scope": "dish",
+    "dishId": "dish-3",
+    "type": "ingredients",
+    "title": "鲜蔬沙拉：主要配料",
+    "text": "鲜蔬沙拉记录的主要配料为：生菜、番茄、黄瓜、油醋汁。",
+    "sourceType": "project-data",
+    "sourceFields": [
+      {
+        "file": "uniCloud-aliyun/database/dishes.init_data.json",
+        "recordId": "dish-3",
+        "fields": [
+          "_id",
+          "name",
+          "ingredients"
+        ]
+      }
+    ],
+    "verified": true,
+    "sourceVersion": 1
+  },
+  {
+    "knowledgeId": "dish-4-taste",
+    "scope": "dish",
+    "dishId": "dish-4",
+    "type": "taste",
+    "title": "柠檬茶：风味或口感",
+    "text": "柠檬茶，项目描述为具有柠檬香气。",
+    "sourceType": "project-data",
+    "sourceFields": [
+      {
+        "file": "uniCloud-aliyun/database/dishes.init_data.json",
+        "recordId": "dish-4",
+        "fields": [
+          "_id",
+          "name",
+          "description"
+        ]
+      }
+    ],
+    "verified": true,
+    "sourceVersion": 1
+  },
+  {
+    "knowledgeId": "dish-4-ingredients",
+    "scope": "dish",
+    "dishId": "dish-4",
+    "type": "ingredients",
+    "title": "柠檬茶：主要配料",
+    "text": "柠檬茶记录的主要配料为：红茶、柠檬。",
+    "sourceType": "project-data",
+    "sourceFields": [
+      {
+        "file": "uniCloud-aliyun/database/dishes.init_data.json",
+        "recordId": "dish-4",
+        "fields": [
+          "_id",
+          "name",
+          "ingredients"
+        ]
+      }
+    ],
+    "verified": true,
+    "sourceVersion": 1
+  },
+  {
+    "knowledgeId": "dish-5-description",
+    "scope": "dish",
+    "dishId": "dish-5",
+    "type": "description",
+    "title": "香辣鸡丁：菜品介绍",
+    "text": "香辣鸡丁的描述为鸡丁与辣椒快炒。",
+    "sourceType": "project-data",
+    "sourceFields": [
+      {
+        "file": "uniCloud-aliyun/database/dishes.init_data.json",
+        "recordId": "dish-5",
+        "fields": [
+          "_id",
+          "name",
+          "description"
+        ]
+      }
+    ],
+    "verified": true,
+    "sourceVersion": 1
+  },
+  {
+    "knowledgeId": "dish-5-ingredients",
+    "scope": "dish",
+    "dishId": "dish-5",
+    "type": "ingredients",
+    "title": "香辣鸡丁：主要配料",
+    "text": "香辣鸡丁记录的主要配料为：鸡腿肉、干辣椒、青椒、花椒。",
+    "sourceType": "project-data",
+    "sourceFields": [
+      {
+        "file": "uniCloud-aliyun/database/dishes.init_data.json",
+        "recordId": "dish-5",
+        "fields": [
+          "_id",
+          "name",
+          "ingredients"
+        ]
+      }
+    ],
+    "verified": true,
+    "sourceVersion": 1
+  },
+  {
+    "knowledgeId": "dish-6-description",
+    "scope": "dish",
+    "dishId": "dish-6",
+    "type": "description",
+    "title": "双椒牛肉：菜品介绍",
+    "text": "双椒牛肉由牛肉搭配青椒和红椒。",
+    "sourceType": "project-data",
+    "sourceFields": [
+      {
+        "file": "uniCloud-aliyun/database/dishes.init_data.json",
+        "recordId": "dish-6",
+        "fields": [
+          "_id",
+          "name",
+          "description",
+          "ingredients"
+        ]
+      }
+    ],
+    "verified": true,
+    "sourceVersion": 1
+  },
+  {
+    "knowledgeId": "dish-6-ingredients",
+    "scope": "dish",
+    "dishId": "dish-6",
+    "type": "ingredients",
+    "title": "双椒牛肉：主要配料",
+    "text": "双椒牛肉记录的主要配料为：牛肉、青椒、红椒、洋葱。",
+    "sourceType": "project-data",
+    "sourceFields": [
+      {
+        "file": "uniCloud-aliyun/database/dishes.init_data.json",
+        "recordId": "dish-6",
+        "fields": [
+          "_id",
+          "name",
+          "ingredients"
+        ]
+      }
+    ],
+    "verified": true,
+    "sourceVersion": 1
+  },
+  {
+    "knowledgeId": "dish-7-description",
+    "scope": "dish",
+    "dishId": "dish-7",
+    "type": "description",
+    "title": "拍黄瓜：菜品介绍",
+    "text": "拍黄瓜的描述为黄瓜拌蒜香酱汁。",
+    "sourceType": "project-data",
+    "sourceFields": [
+      {
+        "file": "uniCloud-aliyun/database/dishes.init_data.json",
+        "recordId": "dish-7",
+        "fields": [
+          "_id",
+          "name",
+          "description"
+        ]
+      }
+    ],
+    "verified": true,
+    "sourceVersion": 1
+  },
+  {
+    "knowledgeId": "dish-7-taste",
+    "scope": "dish",
+    "dishId": "dish-7",
+    "type": "taste",
+    "title": "拍黄瓜：风味或口感",
+    "text": "拍黄瓜中的黄瓜，项目描述为“爽脆”。",
+    "sourceType": "project-data",
+    "sourceFields": [
+      {
+        "file": "uniCloud-aliyun/database/dishes.init_data.json",
+        "recordId": "dish-7",
+        "fields": [
+          "_id",
+          "name",
+          "description"
+        ]
+      }
+    ],
+    "verified": true,
+    "sourceVersion": 1
+  },
+  {
+    "knowledgeId": "dish-7-ingredients",
+    "scope": "dish",
+    "dishId": "dish-7",
+    "type": "ingredients",
+    "title": "拍黄瓜：主要配料",
+    "text": "拍黄瓜记录的主要配料为：黄瓜、蒜、香醋、辣椒。",
+    "sourceType": "project-data",
+    "sourceFields": [
+      {
+        "file": "uniCloud-aliyun/database/dishes.init_data.json",
+        "recordId": "dish-7",
+        "fields": [
+          "_id",
+          "name",
+          "ingredients"
+        ]
+      }
+    ],
+    "verified": true,
+    "sourceVersion": 1
+  },
+  {
+    "knowledgeId": "dish-8-taste",
+    "scope": "dish",
+    "dishId": "dish-8",
+    "type": "taste",
+    "title": "酸梅汤：风味或口感",
+    "text": "酸梅汤，项目描述为“酸甜”。",
+    "sourceType": "project-data",
+    "sourceFields": [
+      {
+        "file": "uniCloud-aliyun/database/dishes.init_data.json",
+        "recordId": "dish-8",
+        "fields": [
+          "_id",
+          "name",
+          "description"
+        ]
+      }
+    ],
+    "verified": true,
+    "sourceVersion": 1
+  },
+  {
+    "knowledgeId": "dish-8-ingredients",
+    "scope": "dish",
+    "dishId": "dish-8",
+    "type": "ingredients",
+    "title": "酸梅汤：主要配料",
+    "text": "酸梅汤记录的主要配料为：乌梅、山楂、冰糖。",
+    "sourceType": "project-data",
+    "sourceFields": [
+      {
+        "file": "uniCloud-aliyun/database/dishes.init_data.json",
+        "recordId": "dish-8",
+        "fields": [
+          "_id",
+          "name",
+          "ingredients"
+        ]
+      }
+    ],
+    "verified": true,
+    "sourceVersion": 1
+  },
+  {
+    "knowledgeId": "restaurant-spicy-level-definitions",
+    "scope": "restaurant",
+    "dishId": null,
+    "type": "taste",
+    "title": "项目辣度标签定义",
+    "text": "项目的辣度标签按 0～5 级定义：0 级为“不辣”；1 级为“微辣”；2 级为“中辣”；3 级为“辣”；4 级为“很辣”；5 级为“特辣”。",
+    "sourceType": "project-data",
+    "sourceFields": [
+      {
+        "file": "src/constants/dish.js",
+        "fields": [
+          "spicyLevelLabels"
+        ]
+      },
+      {
+        "file": "uniCloud-aliyun/database/dishes.schema.json",
+        "fields": [
+          "properties.spicyLevel.minimum",
+          "properties.spicyLevel.maximum"
+        ]
+      }
+    ],
+    "verified": true,
+    "sourceVersion": 1
+  }
+]
