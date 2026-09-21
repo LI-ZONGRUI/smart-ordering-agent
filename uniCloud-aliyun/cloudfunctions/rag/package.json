@@ -1,0 +1,8 @@
+{
+  "name": "rag",
+  "version": "1.0.0",
+  "main": "index.obj.js",
+  "cloudfunction-config": {
+    "timeout": 120
+  }
+}

@@ -1,0 +1,49 @@
+{
+  "bsonType": "object",
+  "description": "由已审核 knowledge-source.json 派生的知识索引，不作为人工知识源维护",
+  "required": ["knowledgeId", "scope", "type", "title", "text", "sourceType", "sourceFields", "sourceVersion", "verified", "contentHash", "embedding", "embeddingModel", "embeddingDimension", "createTime", "updateTime"],
+  "permission": { "read": false, "create": false, "update": false, "delete": false, "count": false },
+  "properties": {
+    "_id": { "bsonType": "string", "description": "数据库自动生成的记录 ID" },
+    "knowledgeId": { "bsonType": "string", "minLength": 1, "description": "对应源知识 knowledgeId，由唯一索引保证不重复" },
+    "scope": { "bsonType": "string", "enum": ["dish", "restaurant"] },
+    "dishId": {
+      "bsonType": "string",
+      "minLength": 1,
+      "pattern": "^\\S+$",
+      "foreignKey": "dishes._id",
+      "description": "dish 级必须对应真实 dishes._id；restaurant 级保留源知识的 null。条件必填由 fieldRules 表达，真实存在性需入库流程校验"
+    },
+    "type": { "bsonType": "string", "enum": ["description", "taste", "ingredients"] },
+    "title": { "bsonType": "string", "minLength": 1 },
+    "text": { "bsonType": "string", "minLength": 1, "description": "已审核的知识正文，原样来自源知识" },
+    "sourceType": { "bsonType": "string", "enum": ["project-data"] },
+    "sourceFields": {
+      "bsonType": "array",
+      "arrayType": "object",
+      "minLength": 1,
+      "description": "原样保留源知识的来源定位列表：每项包含 file、fields 字符串数组，以及可选 recordId"
+    },
+    "sourceVersion": { "bsonType": "int", "minimum": 1, "description": "源知识版本，V1 为 1；用于识别需要重新索引的知识" },
+    "verified": { "bsonType": "bool", "enum": [true], "description": "只接受已人工审核知识，不自动填充 true" },
+    "contentHash": { "bsonType": "string", "pattern": "^[a-f0-9]{64}$", "description": "固定顺序知识内容 JSON 的 SHA-256；正文或来源元数据变化时重新生成向量" },
+    "embedding": {
+      "bsonType": "array",
+      "arrayType": "double",
+      "minLength": 512,
+      "maxLength": 512,
+      "description": "512 维数字向量；不建立普通数据库索引；未来入库前还需逐项检查有限数字"
+    },
+    "embeddingModel": { "bsonType": "string", "enum": ["qwen3.7-text-embedding-flash"] },
+    "embeddingDimension": { "bsonType": "int", "enum": [512] },
+    "createTime": { "bsonType": "timestamp", "description": "首次入库时间，更新保留原值" },
+    "updateTime": { "bsonType": "timestamp", "description": "最近索引更新时间，skip 不修改" }
+  },
+  "fieldRules": [
+    {
+      "rule": "scope != 'dish' || (dishId != null && dishId != '')",
+      "errorMessage": "dish 级知识必须提供非空 dishId",
+      "client": false
+    }
+  ]
+}

@@ -1,0 +1,10 @@
+[
+  {
+    "IndexName": "knowledge_id_unique",
+    "MgoKeySchema": {
+      "MgoIndexKeys": [{ "Name": "knowledgeId", "Direction": "1" }],
+      "MgoIsUnique": true,
+      "MgoIsSparse": false
+    }
+  }
+]

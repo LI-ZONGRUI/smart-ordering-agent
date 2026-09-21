@@ -2,7 +2,7 @@
 
 本项目使用 Vue 3、uni-app CLI、Composition API 和 Pinia。首页、菜单、购物车、订单、我的五个 TabBar 页面保持原有结构。菜单和订单现已改为调用 uniCloud 云对象；购物车仍保存在本次运行的 Pinia 内存中。
 
-**当前状态：uniCloud 点餐闭环与第三阶段 LLM 智能点餐 V1 均已完成真实环境人工验收。** 服务空间已关联，`menu` / `orders` 云对象已部署，`categories` / `dishes` / `orders` 云数据库已初始化。
+**当前状态：uniCloud 点餐闭环、第三阶段 LLM 智能点餐 V1，以及 V4.2 Embedding 与知识索引均已完成真实环境人工验收。** 服务空间已关联，菜单、订单和知识索引均已使用云数据库。当前不进入 V4.3，不包含 Retrieval、Cosine、Top-K 或 RAG 问答。
 
 已完成并验证：
 
@@ -44,6 +44,41 @@ node --test tests/ai-recommend.test.cjs
 
 新环境部署可参考 [新手部署步骤](docs/UNICLOUD_SETUP.md)。
 
+## V4.2：Embedding 与知识索引（已完成）
+
+已通过 Alibaba Cloud Model Studio 的 OpenAI-compatible Embeddings API，使用 `qwen3.7-text-embedding-flash` 生成 512 维向量。V4.2 包括单条连通测试、三条批量测试、`knowledge_chunks` 数据结构，以及可重复、幂等的正式 Indexing Pipeline。
+
+知识数据流：
+
+```text
+docs/rag/knowledge-source.json（唯一人工维护源）
+  → rag/resources/knowledge-source.json（自动生成的部署副本）
+  → Embedding（只处理新增或变化的知识，每批最多 10 条）
+  → knowledge_chunks（云端派生知识与向量）
+```
+
+- Knowledge Source V1 共 21 条，均为 `verified: true`、`sourceVersion: 1`。未来修改知识应先修改、审核源文件，再同步和重新索引，不直接手改部署副本或数据库正文。
+- `rag:sync-source` 生成部署副本和 SHA-256 清单；`rag:check-source` 逐字节检查副本。构建前也会检查一致性，云端读取副本时会验证清单。HBuilderX 上传前仍需手动同步并检查。
+- 以 `knowledgeId` 为唯一身份。比较 `sourceVersion`、`contentHash`、`embeddingModel`、`embeddingDimension`；未变化则 skip，不调用 Embedding API。`contentHash` 基于固定顺序的知识内容和来源元数据 JSON 计算 SHA-256。
+- 批量响应按 `item.index` 映射知识，校验索引完整性、唯一性及 512 个有限数字，允许响应乱序。数据库写入失败会明确计入 failed；重跑时跳过已完成记录。orphan 只报告 ID，不自动删除。
+- `testEmbedding()` / `testBatchEmbedding()` 保留用于手动诊断，仅返回短预览。页面不自动调用它们，也没有 `buildKnowledgeIndex()` 前端入口。
+- 索引通过受限的 `rag-index-admin` 管理云函数手动执行，不属于普通用户功能。API Key 仅从 rag 的远程环境变量读取；不打印密钥、Authorization 请求头或完整向量。
+
+### 真实环境验收记录
+
+以下记录依据开发者于 **2026-09-21** 确认的真实环境验证；本次收尾仅执行本地检查，没有再次调用远程模型或写入数据库。
+
+| 验证步骤 | 已确认结果 |
+| --- | --- |
+| 单条 Embedding | 返回 512 维向量，数字有效 |
+| 三条 Batch Embedding | 返回 3 条 512 维向量，映射验证成功 |
+| 首次正式索引 | 21 条知识插入 `knowledge_chunks` |
+| 第二次正式索引 | 21 条全部 skip，验证重复运行的幂等性 |
+
+第二次全部 skip 对应代码中的零 Embedding 请求分支；本地测试也覆盖该行为。当前完成的是知识向量化与索引准备，尚未将这些向量用于菜品推荐或问答。
+
+完整操作和失败处理见 [索引说明](docs/rag/INDEXING.md)，字段见 [knowledge_chunks 结构说明](docs/rag/KNOWLEDGE_CHUNKS.md)。
+
 ## 目录
 
 ```text
@@ -62,10 +97,15 @@ node --test tests/ai-recommend.test.cjs
 │   ├── cloudfunctions/
 │   │   ├── ai/                      testConnection、recommend
 │   │   ├── menu/                    getCategories、getDishes
-│   │   └── orders/                  createOrder、getOrders
-│   └── database/                    三个 collection 的 schema、索引和示例数据
-├── tests/ai-recommend.test.cjs     AI 推荐回归测试
-└── docs/UNICLOUD_SETUP.md          HBuilderX 人工部署与验证步骤
+│   │   ├── orders/                  createOrder、getOrders
+│   │   ├── rag/                     诊断方法、indexer.js、resources 部署副本
+│   │   └── rag-index-admin/         手动执行索引的管理入口
+│   └── database/                    四个 collection 定义；knowledge_chunks 无向量初始化文件
+├── scripts/sync-rag-source.cjs     同步、检查知识部署副本
+├── tests/                         AI 推荐、批量 Embedding、索引回归测试
+└── docs/
+    ├── UNICLOUD_SETUP.md           HBuilderX 人工部署与验证步骤
+    └── rag/                       冻结知识源、审核记录、结构及索引说明
 ```
 
 ## 数据流
@@ -84,12 +124,24 @@ node --test tests/ai-recommend.test.cjs
 | `categories` | `_id`、`name`、`sort` |
 | `dishes` | `_id`、`name`、`categoryId`、`description`、`price`、`image`、`sales`、`spicyLevel`、`ingredients`、`status`、`recommended`、`createTime`、`updateTime` |
 | `orders` | `_id`、`orderNo`、`items`、`totalPrice`、`totalCount`、`remark`、`status`、`clientId`、`createTime` |
+| `knowledge_chunks` | `knowledgeId`、`scope`、`dishId`、`type`、`title`、`text`、来源信息、`sourceVersion`、`verified`、`contentHash`、`embedding`、`embeddingModel`、`embeddingDimension`、`createTime`、`updateTime` |
 
 `price` 和 `totalPrice` 单位为元；计算时云对象先转换为分，再汇总。`spicyLevel` 为 0～5，依次是不辣、微辣、中辣、辣、很辣、特辣。`status` 在菜品中是 `on_sale` 或 `sold_out`；订单状态是 `pending`、`preparing`、`completed`、`cancelled`，本阶段只创建 `pending` 订单。
 
 `dishes.image` 暂时沿用 `/static/dishes/*.png`。这些路径指向**小程序包内图片**，不是云存储文件。以后若要让运营人员在云端新增菜品图片，应再迁移到云存储。
 
-三个 schema 的客户端数据库直连读写权限均为 `false`。菜单与订单只通过云对象访问数据库。因为现在没有正式登录，`clientId` 的查询限制仍不能视为安全授权。
+四个 schema 的客户端数据库直连读写权限均为 `false`。菜单与订单只通过云对象访问数据库，知识索引由管理流程写入。因为现在没有正式登录，`clientId` 的查询限制仍不能视为安全授权。
+
+## 完整本地检查
+
+```bash
+pnpm run rag:check-source
+node --test tests/*.test.cjs
+pnpm run build:mp-weixin
+git diff --check
+```
+
+这些测试使用模拟 HTTP 和内存数据库，不调用真实 Embedding 或写入云数据库。源码中的环境变量名、示例值、测试假密钥不是真实凭据；真实 API Key 仅配置在云端，`.env` / `.env.*` 继续被忽略（可公开的 `.env.example` 除外）。
 
 ## 构建
 
@@ -102,7 +154,7 @@ pnpm run build:mp-weixin
 
 日常云端联调请在 HBuilderX 中打开当前项目，通过“运行 → 运行到小程序模拟器 → 微信开发者工具”启动，并选择“连接云端云函数”。开发产物位于 `dist/dev/mp-weixin`；不要同时运行 `pnpm run dev:mp-weixin`，避免两个编译进程写入同一目录。
 
-`pnpm run build:mp-weixin` 用于前端正式构建检查，产物位于 `dist/build/mp-weixin`；命令本身不会部署云对象或初始化数据库。关联服务空间及云端联调步骤见 [新手部署步骤](docs/UNICLOUD_SETUP.md)。
+`pnpm run build:mp-weixin` 先检查知识部署副本，再进行前端正式构建，产物位于 `dist/build/mp-weixin`；命令本身不会生成向量、部署云对象或初始化数据库。关联服务空间及云端联调步骤见 [新手部署步骤](docs/UNICLOUD_SETUP.md)。
 
 开发说明：当前微信开发者工具与 development sourcemap 存在兼容问题（`No element indexed by 9`）。`vite.config.js` 暂时只在 `mp-weixin + development` 下关闭 sourcemap，正式发行与其他平台配置不受影响。开发调试期间无法通过 sourcemap 定位原始源码行号；兼容问题修复后可移除该条件配置。
 
