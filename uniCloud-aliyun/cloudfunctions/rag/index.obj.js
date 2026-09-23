@@ -1,6 +1,30 @@
 const { URL } = require('url')
 
 module.exports = {
+  async evaluateRobustness() {
+    // 仅供开发/管理评测，不是普通用户 API；不接收外部 Query 或标签。
+    if (!['function', 'server'].includes(this.getClientInfo?.().source)) {
+      return { errCode: 'ROBUSTNESS_FORBIDDEN', errMsg: '请通过管理云函数执行 Robustness 评测' }
+    }
+    const { evaluateRobustness } = require('./robustness-evaluator')
+    return evaluateRobustness({ db: uniCloud.database(), httpclient: uniCloud.httpclient })
+  },
+
+  async evaluateRetrieval() {
+    // 开发/管理评测，不是微信用户 API；固定评测集不从客户端接收。
+    if (!['function', 'server'].includes(this.getClientInfo?.().source)) {
+      return { errCode: 'EVAL_FORBIDDEN', errMsg: '请通过管理云函数执行固定检索评测' }
+    }
+    const { evaluateRetrieval } = require('./evaluator')
+    return evaluateRetrieval({ db: uniCloud.database(), httpclient: uniCloud.httpclient })
+  },
+
+  async testRetrieval() {
+    // 固定 query 的只读诊断，不接收前端 query，不调用回答模型或索引写入逻辑。
+    const { testRetrieval } = require('./retriever')
+    return testRetrieval({ db: uniCloud.database(), httpclient: uniCloud.httpclient })
+  },
+
   async buildKnowledgeIndex() {
     // 开发/管理用 indexing 方法，不是普通用户 API。由管理云函数调用。
     // source 由 uniCloud 调用上下文提供，不接受客户端参数指定来源或知识内容。

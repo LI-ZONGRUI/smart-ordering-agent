@@ -1,0 +1,222 @@
+{
+  "knowledgeSource": "docs/rag/knowledge-source.json",
+  "knowledgeSourceSha256": "f341c287c97056b4766fd514532de31fc8a2b5cd0a3e76641283192fcd04f0a6",
+  "expectedKnowledgeCount": 21,
+  "embeddingModel": "qwen3.7-text-embedding-flash",
+  "embeddingDimension": 512,
+  "topK": 3,
+  "robustnessVersion": 1,
+  "retrieverBaselineVersion": 1,
+  "labelPolicy": "独立固定人工标签；不依据检索结果改标签，不修改历史 Baseline。",
+  "queries": [
+    {
+      "id": "paraphrase-beef",
+      "query": "有没有牛肉做的东西？",
+      "kind": "supported-paraphrase",
+      "relevantKnowledgeIds": [
+        "dish-2-description",
+        "dish-2-ingredients",
+        "dish-6-description",
+        "dish-6-ingredients"
+      ],
+      "labelRationale": "选取直接说明牛肉搭配或主要配料的知识，不把菜名重复出现的风味块都列为相关。"
+    },
+    {
+      "id": "paraphrase-chicken",
+      "query": "想来点鸡肉做的",
+      "kind": "supported-paraphrase",
+      "relevantKnowledgeIds": [
+        "dish-1-description",
+        "dish-1-ingredients",
+        "dish-5-description",
+        "dish-5-ingredients"
+      ],
+      "labelRationale": "鸡腿饭的鸡腿、香辣鸡丁的鸡丁/鸡腿肉，由介绍或配料直接支持。"
+    },
+    {
+      "id": "paraphrase-sweet-sour",
+      "query": "想吃点酸酸甜甜的",
+      "kind": "supported-paraphrase",
+      "relevantKnowledgeIds": [
+        "dish-2-taste",
+        "dish-8-taste"
+      ],
+      "labelRationale": "两条 taste 原文均明确出现酸甜。"
+    },
+    {
+      "id": "paraphrase-drinks",
+      "query": "有没有喝的东西？",
+      "kind": "supported-paraphrase",
+      "relevantKnowledgeIds": [
+        "dish-4-taste",
+        "dish-4-ingredients",
+        "dish-8-taste",
+        "dish-8-ingredients"
+      ],
+      "labelRationale": "当前源中柠檬茶和酸梅汤仅有 taste/ingredients，没有 description。"
+    },
+    {
+      "id": "paraphrase-lemon",
+      "query": "想喝点有柠檬味的",
+      "kind": "supported-paraphrase",
+      "relevantKnowledgeIds": [
+        "dish-4-taste"
+      ],
+      "labelRationale": "柠檬茶 taste 明确记载柠檬香气，仅标记直接支持味道的知识。"
+    },
+    {
+      "id": "paraphrase-crunchy",
+      "query": "有没有脆脆的东西？",
+      "kind": "supported-paraphrase",
+      "relevantKnowledgeIds": [
+        "dish-7-taste"
+      ],
+      "labelRationale": "拍黄瓜 taste 原文明确写爽脆。"
+    },
+    {
+      "id": "paraphrase-plum",
+      "query": "有没有用乌梅做的？",
+      "kind": "supported-paraphrase",
+      "relevantKnowledgeIds": [
+        "dish-8-ingredients"
+      ],
+      "labelRationale": "主要配料中明确列出乌梅。"
+    },
+    {
+      "id": "paraphrase-tomato",
+      "query": "什么里面有番茄？",
+      "kind": "supported-paraphrase",
+      "relevantKnowledgeIds": [
+        "dish-2-description",
+        "dish-2-ingredients",
+        "dish-3-ingredients"
+      ],
+      "labelRationale": "番茄牛肉面 description / ingredients 明确支持番茄；鲜蔬沙拉 ingredients 也明确包含番茄，因此补充。沿用材料问题只标介绍/配料的规则，不因 taste 重复提及汤底而扩充。"
+    },
+    {
+      "id": "paraphrase-peppers",
+      "query": "哪些东西放了辣椒？",
+      "kind": "supported-paraphrase",
+      "relevantKnowledgeIds": [
+        "dish-5-description",
+        "dish-5-ingredients",
+        "dish-6-description",
+        "dish-6-ingredients",
+        "dish-7-ingredients"
+      ],
+      "labelRationale": "包含明确写有辣椒、干辣椒、青椒或红椒的介绍/配料；不单凭花椒推定有辣椒。"
+    },
+    {
+      "id": "paraphrase-rice",
+      "query": "有没有带米饭的？",
+      "kind": "supported-paraphrase",
+      "relevantKnowledgeIds": [
+        "dish-1-description",
+        "dish-1-ingredients"
+      ],
+      "labelRationale": "鸡腿饭介绍和主要配料均明确列出米饭。"
+    },
+    {
+      "id": "paraphrase-refreshing",
+      "query": "我想找点清爽口感的",
+      "kind": "supported-paraphrase",
+      "relevantKnowledgeIds": [
+        "dish-3-taste",
+        "dish-4-taste",
+        "dish-7-taste"
+      ],
+      "labelRationale": "沿用用户指定的人工语义相关标签：沙拉明确写清爽；柠檬茶只写柠檬香气，拍黄瓜只写爽脆。后二者作为偏好相关项，不声称原文具有清爽保证，不依据实测排名修改标签。"
+    },
+    {
+      "id": "paraphrase-vague-refreshing",
+      "query": "想吃点爽口的",
+      "kind": "supported-exploratory",
+      "relevantKnowledgeIds": [],
+      "labelRationale": "爽口未在冻结知识中直接定义，清爽、爽脆和酸甜不能无条件等同；保留作 supported-exploratory，不进入正式 supported 或分数间隔统计。"
+    },
+    {
+      "id": "hard-01",
+      "query": "可以订座吗？",
+      "kind": "unsupported-domain-hard",
+      "relevantKnowledgeIds": [],
+      "labelRationale": "当前冻结的 21 条知识仅支持菜品介绍、口味、配料及辣度定义，不支持此服务/设施/营业政策问题。"
+    },
+    {
+      "id": "hard-02",
+      "query": "有包间吗？",
+      "kind": "unsupported-domain-hard",
+      "relevantKnowledgeIds": [],
+      "labelRationale": "当前冻结的 21 条知识仅支持菜品介绍、口味、配料及辣度定义，不支持此服务/设施/营业政策问题。"
+    },
+    {
+      "id": "hard-03",
+      "query": "能打包带走吗？",
+      "kind": "unsupported-domain-hard",
+      "relevantKnowledgeIds": [],
+      "labelRationale": "当前冻结的 21 条知识仅支持菜品介绍、口味、配料及辣度定义，不支持此服务/设施/营业政策问题。"
+    },
+    {
+      "id": "hard-04",
+      "query": "可以带宠物进来吗？",
+      "kind": "unsupported-domain-hard",
+      "relevantKnowledgeIds": [],
+      "labelRationale": "当前冻结的 21 条知识仅支持菜品介绍、口味、配料及辣度定义，不支持此服务/设施/营业政策问题。"
+    },
+    {
+      "id": "hard-05",
+      "query": "有儿童座椅吗？",
+      "kind": "unsupported-domain-hard",
+      "relevantKnowledgeIds": [],
+      "labelRationale": "当前冻结的 21 条知识仅支持菜品介绍、口味、配料及辣度定义，不支持此服务/设施/营业政策问题。"
+    },
+    {
+      "id": "hard-06",
+      "query": "店里有 Wi-Fi 吗？",
+      "kind": "unsupported-domain-hard",
+      "relevantKnowledgeIds": [],
+      "labelRationale": "当前冻结的 21 条知识仅支持菜品介绍、口味、配料及辣度定义，不支持此服务/设施/营业政策问题。"
+    },
+    {
+      "id": "hard-07",
+      "query": "你们几点打烊？",
+      "kind": "unsupported-domain-hard",
+      "relevantKnowledgeIds": [],
+      "labelRationale": "当前冻结的 21 条知识仅支持菜品介绍、口味、配料及辣度定义，不支持此服务/设施/营业政策问题。"
+    },
+    {
+      "id": "hard-08",
+      "query": "周末几点开门？",
+      "kind": "unsupported-domain-hard",
+      "relevantKnowledgeIds": [],
+      "labelRationale": "当前冻结的 21 条知识仅支持菜品介绍、口味、配料及辣度定义，不支持此服务/设施/营业政策问题。"
+    },
+    {
+      "id": "hard-09",
+      "query": "可以用支付宝吗？",
+      "kind": "unsupported-domain-hard",
+      "relevantKnowledgeIds": [],
+      "labelRationale": "当前冻结的 21 条知识仅支持菜品介绍、口味、配料及辣度定义，不支持此服务/设施/营业政策问题。"
+    },
+    {
+      "id": "hard-10",
+      "query": "能刷信用卡吗？",
+      "kind": "unsupported-domain-hard",
+      "relevantKnowledgeIds": [],
+      "labelRationale": "当前冻结的 21 条知识仅支持菜品介绍、口味、配料及辣度定义，不支持此服务/设施/营业政策问题。"
+    },
+    {
+      "id": "hard-11",
+      "query": "可以提前预约菜吗？",
+      "kind": "unsupported-domain-hard",
+      "relevantKnowledgeIds": [],
+      "labelRationale": "当前冻结的 21 条知识仅支持菜品介绍、口味、配料及辣度定义，不支持此服务/设施/营业政策问题。"
+    },
+    {
+      "id": "hard-12",
+      "query": "有最低消费吗？",
+      "kind": "unsupported-domain-hard",
+      "relevantKnowledgeIds": [],
+      "labelRationale": "当前冻结的 21 条知识仅支持菜品介绍、口味、配料及辣度定义，不支持此服务/设施/营业政策问题。"
+    }
+  ]
+}

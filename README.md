@@ -2,7 +2,7 @@
 
 本项目使用 Vue 3、uni-app CLI、Composition API 和 Pinia。首页、菜单、购物车、订单、我的五个 TabBar 页面保持原有结构。菜单和订单现已改为调用 uniCloud 云对象；购物车仍保存在本次运行的 Pinia 内存中。
 
-**当前状态：uniCloud 点餐闭环、第三阶段 LLM 智能点餐 V1，以及 V4.2 Embedding 与知识索引均已完成真实环境人工验收。** 服务空间已关联，菜单、订单和知识索引均已使用云数据库。当前不进入 V4.3，不包含 Retrieval、Cosine、Top-K 或 RAG 问答。
+**当前状态：uniCloud 点餐闭环、LLM 智能点餐 V1，以及 V4 的知识索引、检索与评测均已完成真实环境人工验收。** 当前完成的是 RAG indexing and retrieval pipeline；最终回答生成链路尚未接入，不能视为“完整 RAG 已完成”。本次仅做 V4.3 收尾，不进入 V4.4。
 
 已完成并验证：
 
@@ -75,9 +75,35 @@ docs/rag/knowledge-source.json（唯一人工维护源）
 | 首次正式索引 | 21 条知识插入 `knowledge_chunks` |
 | 第二次正式索引 | 21 条全部 skip，验证重复运行的幂等性 |
 
-第二次全部 skip 对应代码中的零 Embedding 请求分支；本地测试也覆盖该行为。当前完成的是知识向量化与索引准备，尚未将这些向量用于菜品推荐或问答。
+第二次全部 skip 对应代码中的零 Embedding 请求分支；本地测试也覆盖该行为。这些索引现已用于下述 V4.3 检索与评测；原有 AI 菜品推荐业务未改为 RAG，正式问答生成链路仍未接入。
 
 完整操作和失败处理见 [索引说明](docs/rag/INDEXING.md)，字段见 [knowledge_chunks 结构说明](docs/rag/KNOWLEDGE_CHUNKS.md)。
+
+## V4.3：Exact Retrieval 与 Evaluation（已真实验证）
+
+V4 当前已完成：verified Knowledge Source V1、Embedding + Indexing Pipeline、21 条 512 维 knowledge_chunks、幂等 Indexing、Exact Cosine Retrieval、Top-3 Retrieval、Retrieval Evaluation 和 Robustness Evaluation。
+
+Retriever 使用 `qwen3.7-text-embedding-flash`、512 维、21 条知识，按原始 cosine similarity 排序后取 Top-3。当前没有 threshold、reranker、BM25 / Hybrid Search、keyword/type boost、dish 去重、query rewrite、intent router 或 answerability classifier。
+
+### 真实云端验证结果
+
+以下依据开发者于 2026-09-22 收尾时提供的真实验证结果；本次没有重新执行远程评测：
+
+| 评测 | 主要结果 |
+| --- | --- |
+| Baseline（19 Query，其中 7 labeled） | Hit@3 = 7/7 = 100%；Average Recall@3 ≈ 0.80；Average Coverage@3 ≈ 95.24% |
+| Robustness（24 Query，其中 11 supported、12 hard unsupported、1 exploratory） | supported Top-1 relevant = 11/11；Hit@3 = 11/11；Average Recall@3 ≈ 0.865152；Average Coverage@3 ≈ 96.97% |
+| Robustness separation | supported 最低 Top-1 0.373664，unsupported 最高 Top-1 0.405820；gap = -0.032156，真实发生重叠 |
+
+当前相关知识排序表现良好，但 **fixed cosine threshold alone was not sufficient for perfect answerability separation on the tested dataset**。cosine 仍用于相关知识排序；其绝对分数不能独立稳定地判断知识库是否有答案。本阶段只记录实验结论，没有实现 threshold 或拒答策略。
+
+这些结果来自当前 **21-chunk 小型项目知识库与人工评测集**，不能直接推广为大规模生产系统性能。完整的单 Query Top-3、分布、指标定义和复现步骤见 [Retrieval Evaluation 报告](docs/rag/RETRIEVAL_EVALUATION.md)。
+
+### 已完成的边界
+
+**RAG indexing and retrieval pipeline completed and evaluated; generation integration is the next stage.** 当前尚未完成 Retrieval-Augmented Generation 最终回答链路、RAG Prompt、正式用户 RAG 问答页面、Reranker、Hybrid Search 或 Answerability classifier。
+
+检索与评测是开发/管理工具：`testRetrieval()`、`testEmbedding()`、`testBatchEmbedding()` 保留作诊断；`rag-eval-admin` 与 `rag-robustness-eval-admin` 用于人工执行两套独立固定评测，页面不会自动调用。历史 Baseline、Retriever、Knowledge Source 与 Indexer 均保持冻结，没有为了提高指标修改排名或标签。
 
 ## 目录
 
@@ -98,14 +124,16 @@ docs/rag/knowledge-source.json（唯一人工维护源）
 │   │   ├── ai/                      testConnection、recommend
 │   │   ├── menu/                    getCategories、getDishes
 │   │   ├── orders/                  createOrder、getOrders
-│   │   ├── rag/                     诊断方法、indexer.js、resources 部署副本
-│   │   └── rag-index-admin/         手动执行索引的管理入口
+│   │   ├── rag/                     索引、检索、评测模块与 resources 部署资源
+│   │   ├── rag-index-admin/         手动执行索引的管理入口
+│   │   ├── rag-eval-admin/          Baseline 固定评测管理入口
+│   │   └── rag-robustness-eval-admin/ Robustness 固定评测管理入口
 │   └── database/                    四个 collection 定义；knowledge_chunks 无向量初始化文件
 ├── scripts/sync-rag-source.cjs     同步、检查知识部署副本
-├── tests/                         AI 推荐、批量 Embedding、索引回归测试
+├── tests/                         AI 推荐、Embedding、索引、检索、评测及冻结文件回归测试
 └── docs/
     ├── UNICLOUD_SETUP.md           HBuilderX 人工部署与验证步骤
-    └── rag/                       冻结知识源、审核记录、结构及索引说明
+    └── rag/                       冻结知识源、审核记录、索引说明与真实检索评测报告
 ```
 
 ## 数据流

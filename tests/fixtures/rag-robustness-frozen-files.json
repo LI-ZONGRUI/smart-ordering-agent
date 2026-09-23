@@ -1,0 +1,11 @@
+{
+  "uniCloud-aliyun/cloudfunctions/rag/retriever.js": "bf9d1ad8c12b250e7560ba704ceb5d4f51dbc0de6353c0d21641d4c2b2ac97e7",
+  "uniCloud-aliyun/cloudfunctions/rag/evaluator.js": "573460201f34991ee9bee0333ce2700ce78b605bf6f6b719d7a128ad4a836626",
+  "uniCloud-aliyun/cloudfunctions/rag/resources/retrieval-eval.json": "c550c6424f23f25fec2bf7f260c8da4ff70cb715276008e7ad3525237b57a4b4",
+  "tests/fixtures/rag-retrieval-baseline-v1.json": "f3c0dd83f3c6f25a7b2b9ef81efe80ed19b912bdced8f1f20628d656bace6f36",
+  "docs/rag/knowledge-source.json": "f341c287c97056b4766fd514532de31fc8a2b5cd0a3e76641283192fcd04f0a6",
+  "uniCloud-aliyun/cloudfunctions/rag/resources/knowledge-source.json": "f341c287c97056b4766fd514532de31fc8a2b5cd0a3e76641283192fcd04f0a6",
+  "uniCloud-aliyun/cloudfunctions/rag/indexer.js": "71cab90fde5d8fb1a87534322a5143f1715beed437e2dd5d2ea07b0ca1b64bfd",
+  "uniCloud-aliyun/database/knowledge_chunks.schema.json": "9b93e351d10b91dafd2bca78b0d98d823ec19a09fbcb756aef51e55110bd61ad",
+  "uniCloud-aliyun/database/knowledge_chunks.index.json": "5643a13bd983ea3ddf9977289cc2821fd06fab2add16587bd826f1394d1c5980"
+}

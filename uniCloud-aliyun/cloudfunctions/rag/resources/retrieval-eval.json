@@ -1,0 +1,176 @@
+{
+  "evaluationVersion": 2,
+  "knowledgeSource": "docs/rag/knowledge-source.json",
+  "knowledgeSourceSha256": "f341c287c97056b4766fd514532de31fc8a2b5cd0a3e76641283192fcd04f0a6",
+  "expectedKnowledgeCount": 21,
+  "embeddingModel": "qwen3.7-text-embedding-flash",
+  "embeddingDimension": 512,
+  "topK": 3,
+  "labelPolicy": "固定人工规则标签；依据冻结源及用户候选制定，不调用 LLM 标注，不使用本次评测结果调标签或排序。",
+  "queries": [
+    {
+      "id": "beef",
+      "query": "我想吃牛肉",
+      "kind": "labeled",
+      "relevantKnowledgeIds": [
+        "dish-2-description",
+        "dish-2-ingredients",
+        "dish-6-description",
+        "dish-6-ingredients"
+      ],
+      "labelRationale": "选取直接说明牛肉搭配或主要配料的知识，不把菜名重复出现的风味块都列为相关。"
+    },
+    {
+      "id": "chicken",
+      "query": "有什么鸡肉？",
+      "kind": "labeled",
+      "relevantKnowledgeIds": [
+        "dish-1-description",
+        "dish-1-ingredients",
+        "dish-5-description",
+        "dish-5-ingredients"
+      ],
+      "labelRationale": "鸡腿饭的鸡腿、香辣鸡丁的鸡丁/鸡腿肉，由介绍或配料直接支持。"
+    },
+    {
+      "id": "sweet-sour",
+      "query": "想吃酸甜的",
+      "kind": "labeled",
+      "relevantKnowledgeIds": [
+        "dish-2-taste",
+        "dish-8-taste"
+      ],
+      "labelRationale": "两条 taste 原文均明确出现酸甜。"
+    },
+    {
+      "id": "peppers",
+      "query": "哪些菜有辣椒？",
+      "kind": "labeled",
+      "relevantKnowledgeIds": [
+        "dish-5-description",
+        "dish-5-ingredients",
+        "dish-6-description",
+        "dish-6-ingredients",
+        "dish-7-ingredients"
+      ],
+      "labelRationale": "包含明确写有辣椒、干辣椒、青椒或红椒的介绍/配料；不单凭花椒推定有辣椒。"
+    },
+    {
+      "id": "drinks",
+      "query": "有什么饮料？",
+      "kind": "labeled",
+      "relevantKnowledgeIds": [
+        "dish-4-taste",
+        "dish-4-ingredients",
+        "dish-8-taste",
+        "dish-8-ingredients"
+      ],
+      "labelRationale": "当前源中柠檬茶和酸梅汤仅有 taste/ingredients，没有 description。"
+    },
+    {
+      "id": "refreshing",
+      "query": "有什么比较清爽的？",
+      "kind": "labeled",
+      "relevantKnowledgeIds": [
+        "dish-3-taste",
+        "dish-4-taste",
+        "dish-7-taste"
+      ],
+      "labelRationale": "沿用用户指定的人工语义相关标签：沙拉明确写清爽；柠檬茶只写柠檬香气，拍黄瓜只写爽脆。后二者作为偏好相关项，不声称原文具有清爽保证，不依据实测排名修改标签。"
+    },
+    {
+      "id": "crunchy",
+      "query": "我想吃点爽脆的",
+      "kind": "labeled",
+      "relevantKnowledgeIds": [
+        "dish-7-taste"
+      ],
+      "labelRationale": "拍黄瓜 taste 原文明确写爽脆。"
+    },
+    {
+      "id": "ingredients-broad",
+      "query": "想看看主要配料是什么",
+      "kind": "exploratory",
+      "relevantKnowledgeIds": [],
+      "labelRationale": "没有指明菜品，无法建立有区分力的少量相关标签。仅观察 Top-3，不把全部配料知识强行标为 relevant，不计入 Recall/Hit 平均。"
+    },
+    {
+      "id": "weather",
+      "query": "今天香港天气怎么样？",
+      "kind": "external-ood",
+      "relevantKnowledgeIds": [],
+      "labelRationale": "知识源无天气知识；只观察相似度分布，不计普通 Recall/Hit。"
+    },
+    {
+      "id": "python",
+      "query": "Python 怎么安装？",
+      "kind": "external-ood",
+      "relevantKnowledgeIds": [],
+      "labelRationale": "知识源无 Python 安装知识；只观察相似度分布，不计普通 Recall/Hit。"
+    },
+    {
+      "id": "arithmetic",
+      "query": "2 加 2 等于多少？",
+      "kind": "external-ood",
+      "relevantKnowledgeIds": [],
+      "labelRationale": "算术问题，与餐厅知识无关。仅观察相似度，不参与 Recall/Hit/Coverage。"
+    },
+    {
+      "id": "photosynthesis",
+      "query": "什么是光合作用？",
+      "kind": "external-ood",
+      "relevantKnowledgeIds": [],
+      "labelRationale": "科学概念问题，与餐厅知识无关。仅观察相似度，不参与 Recall/Hit/Coverage。"
+    },
+    {
+      "id": "iphone-screenshot",
+      "query": "iPhone 怎么截屏？",
+      "kind": "external-ood",
+      "relevantKnowledgeIds": [],
+      "labelRationale": "设备使用问题，与餐厅知识无关。仅观察相似度，不参与 Recall/Hit/Coverage。"
+    },
+    {
+      "id": "poem",
+      "query": "给我写一首短诗。",
+      "kind": "external-ood",
+      "relevantKnowledgeIds": [],
+      "labelRationale": "创作请求，不是餐厅知识问题。仅观察相似度，不参与 Recall/Hit/Coverage。"
+    },
+    {
+      "id": "opening-hours",
+      "query": "你们几点营业？",
+      "kind": "unsupported-domain",
+      "relevantKnowledgeIds": [],
+      "labelRationale": "冻结源没有营业时间。属于餐厅场景但知识库不支持答案；只观察相似度，不参与 Recall/Hit/Coverage。"
+    },
+    {
+      "id": "invoice",
+      "query": "可以开发票吗？",
+      "kind": "unsupported-domain",
+      "relevantKnowledgeIds": [],
+      "labelRationale": "冻结源没有发票政策。属于餐厅场景但知识库不支持答案；只观察相似度，不参与 Recall/Hit/Coverage。"
+    },
+    {
+      "id": "parking",
+      "query": "餐厅有停车位吗？",
+      "kind": "unsupported-domain",
+      "relevantKnowledgeIds": [],
+      "labelRationale": "冻结源没有停车设施信息。属于餐厅场景但知识库不支持答案；只观察相似度，不参与 Recall/Hit/Coverage。"
+    },
+    {
+      "id": "delivery",
+      "query": "可以外送吗？",
+      "kind": "unsupported-domain",
+      "relevantKnowledgeIds": [],
+      "labelRationale": "冻结源没有外送服务信息。属于餐厅场景但知识库不支持答案；只观察相似度，不参与 Recall/Hit/Coverage。"
+    },
+    {
+      "id": "payment",
+      "query": "支持什么付款方式？",
+      "kind": "unsupported-domain",
+      "relevantKnowledgeIds": [],
+      "labelRationale": "冻结源没有付款方式说明。属于餐厅场景但知识库不支持答案；只观察相似度，不参与 Recall/Hit/Coverage。"
+    }
+  ],
+  "retrieverBaselineVersion": 1
+}
