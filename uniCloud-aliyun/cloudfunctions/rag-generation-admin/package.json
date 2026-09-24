@@ -1,0 +1,8 @@
+{
+  "name": "rag-generation-admin",
+  "version": "1.0.0",
+  "main": "index.js",
+  "cloudfunction-config": {
+    "timeout": 120
+  }
+}

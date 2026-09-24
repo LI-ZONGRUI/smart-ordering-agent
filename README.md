@@ -2,7 +2,7 @@
 
 本项目使用 Vue 3、uni-app CLI、Composition API 和 Pinia。首页、菜单、购物车、订单、我的五个 TabBar 页面保持原有结构。菜单和订单现已改为调用 uniCloud 云对象；购物车仍保存在本次运行的 Pinia 内存中。
 
-**当前状态：uniCloud 点餐闭环、LLM 智能点餐 V1，以及 V4 的知识索引、检索与评测均已完成真实环境人工验收。** 当前完成的是 RAG indexing and retrieval pipeline；最终回答生成链路尚未接入，不能视为“完整 RAG 已完成”。本次仅做 V4.3 收尾，不进入 V4.4。
+**当前状态：uniCloud 点餐闭环、LLM 智能点餐 V1，以及 V4 的知识索引、检索、评测和固定 Query 最小 RAG 生成链路均已完成真实环境人工验收。** A minimal end-to-end RAG loop has been validated with a fixed query. 当前通过管理入口验证，不代表任意用户问答、生产 RAG 或完整 answerability 已完成。
 
 已完成并验证：
 
@@ -24,7 +24,7 @@
 4. 返回前再次查询数据库，二次校验售罄状态并重新读取价格。菜品名称、图片、配料等展示字段来自数据库；后端按分汇总并计算 `totalPrice`，不采信模型返回的价格。
 5. 推荐菜品加购前刷新状态，复用现有 Pinia `cartStore.addDish()`；订单仍走原有确认和后端校价流程。
 
-**LLM 负责语义理解和推荐决策；数据库和 uniCloud 负责事实、状态、价格和业务规则。** 常见数字预算和明确食材排除有额外后端校验，复杂口味偏好仍由模型理解。当前版本是单轮推荐，不是 RAG，也不是 Agent；没有多轮对话、工具执行或聊天历史数据库。
+**LLM 负责语义理解和推荐决策；数据库和 uniCloud 负责事实、状态、价格和业务规则。** 常见数字预算和明确食材排除有额外后端校验，复杂口味偏好仍由模型理解。当前 AI 菜品推荐版本是单轮推荐，不是 RAG，也不是 Agent；没有多轮对话、工具执行或聊天历史数据库。
 
 API Key 仅通过云对象运行环境中的 `DASHSCOPE_API_KEY` 读取；`LLM_BASE_URL` 和 `LLM_MODEL` 也从环境变量读取。真实密钥不写入源码或前端，不打印 Authorization 请求头或原始敏感请求。`.env` 等本地配置继续由 `.gitignore` 忽略。`testConnection()` 保留作为手动连通诊断方法，任何页面均不自动调用。
 
@@ -75,13 +75,13 @@ docs/rag/knowledge-source.json（唯一人工维护源）
 | 首次正式索引 | 21 条知识插入 `knowledge_chunks` |
 | 第二次正式索引 | 21 条全部 skip，验证重复运行的幂等性 |
 
-第二次全部 skip 对应代码中的零 Embedding 请求分支；本地测试也覆盖该行为。这些索引现已用于下述 V4.3 检索与评测；原有 AI 菜品推荐业务未改为 RAG，正式问答生成链路仍未接入。
+第二次全部 skip 对应代码中的零 Embedding 请求分支；本地测试也覆盖该行为。这些索引现已用于下述 V4.3 检索与评测，以及 V4.4.1 固定 Query 的 RAG 生成诊断；原有 AI 菜品推荐业务未改为 RAG，正式任意用户问答接口尚未实现。
 
 完整操作和失败处理见 [索引说明](docs/rag/INDEXING.md)，字段见 [knowledge_chunks 结构说明](docs/rag/KNOWLEDGE_CHUNKS.md)。
 
 ## V4.3：Exact Retrieval 与 Evaluation（已真实验证）
 
-V4 当前已完成：verified Knowledge Source V1、Embedding + Indexing Pipeline、21 条 512 维 knowledge_chunks、幂等 Indexing、Exact Cosine Retrieval、Top-3 Retrieval、Retrieval Evaluation 和 Robustness Evaluation。
+V4.3 完成范围：verified Knowledge Source V1、Embedding + Indexing Pipeline、21 条 512 维 knowledge_chunks、幂等 Indexing、Exact Cosine Retrieval、Top-3 Retrieval、Retrieval Evaluation 和 Robustness Evaluation。
 
 Retriever 使用 `qwen3.7-text-embedding-flash`、512 维、21 条知识，按原始 cosine similarity 排序后取 Top-3。当前没有 threshold、reranker、BM25 / Hybrid Search、keyword/type boost、dish 去重、query rewrite、intent router 或 answerability classifier。
 
@@ -101,9 +101,21 @@ Retriever 使用 `qwen3.7-text-embedding-flash`、512 维、21 条知识，按�
 
 ### 已完成的边界
 
-**RAG indexing and retrieval pipeline completed and evaluated; generation integration is the next stage.** 当前尚未完成 Retrieval-Augmented Generation 最终回答链路、RAG Prompt、正式用户 RAG 问答页面、Reranker、Hybrid Search 或 Answerability classifier。
+V4.3 已完成 RAG indexing and retrieval pipeline 与评测；其冻结结果由下述 V4.4.1 最小 Generation 链路复用。正式用户 RAG 问答接口和页面尚未实现，也没有加入 Reranker、Hybrid Search 或 Answerability classifier。
 
 检索与评测是开发/管理工具：`testRetrieval()`、`testEmbedding()`、`testBatchEmbedding()` 保留作诊断；`rag-eval-admin` 与 `rag-robustness-eval-admin` 用于人工执行两套独立固定评测，页面不会自动调用。历史 Baseline、Retriever、Knowledge Source 与 Indexer 均保持冻结，没有为了提高指标修改排名或标签。
+
+## V4.4.1：最小 RAG Generation（已真实验证）
+
+依据开发者提供的真实远程验收，当前已完成 Knowledge Source V1、Embedding / Indexing、Exact Cosine Retrieval、Retrieval Evaluation / Robustness Evaluation，以及最小 Retrieval-Augmented Generation。固定 Query 为“有什么比较清爽的？”，由 `rag-generation-admin → rag.testRagGeneration()` 手动触发，无前端入口。
+
+最终 V4.4.1c 使用 **Qwen evidence selection → server-side evidence ID validation → evidence-first grounded rendering**：Qwen3.8-Flash 只返回 `answerable`、`dishIds` 和 `usedKnowledgeIds`；服务器校验后，从本次 Retrieval results 读取真实正文，按选择顺序换行拼接最终 answer。模型自由 answer、claim.text 和其他额外字段均被拒绝。
+
+真实复验返回 `errCode: 0`，答案由鲜蔬沙拉“清爽”、拍黄瓜“爽脆”、柠檬茶“具有柠檬香气”三条 evidence 原文组成，不再出现“解腻”或“清爽的柠檬香气”等扩写。这关闭了自由 answer 绕过 claims、以及模型 claim.text 在合法引用下扩写事实的输出路径。
+
+当前解决的是事实措辞的信任边界。模型仍可能漏选或错选合法 evidence、误判 answerable，检索 Top-3 也可能漏掉正确知识；不构成 formal correctness 或 semantic grounding 的整体保证。下一阶段仍是正式 `rag.answer(query)` 与多 Query Generation / Answerability Evaluation，本次不实现。
+
+rag 继续从自身远程环境变量读取 `RAG_LLM_MODEL=qwen3.8-flash` 和现有 Embedding 配置；密钥不进入源码。原有 AI 推荐、Retriever、Knowledge Source、Indexer、数据库结构及前端保持不变。完整真实演进、当前合同与按需复验步骤见 [Generation 验证记录](docs/rag/GENERATION_TEST.md)。
 
 ## 目录
 
@@ -127,7 +139,8 @@ Retriever 使用 `qwen3.7-text-embedding-flash`、512 维、21 条知识，按�
 │   │   ├── rag/                     索引、检索、评测模块与 resources 部署资源
 │   │   ├── rag-index-admin/         手动执行索引的管理入口
 │   │   ├── rag-eval-admin/          Baseline 固定评测管理入口
-│   │   └── rag-robustness-eval-admin/ Robustness 固定评测管理入口
+│   │   ├── rag-robustness-eval-admin/ Robustness 固定评测管理入口
+│   │   └── rag-generation-admin/    固定 Query Generation 诊断入口
 │   └── database/                    四个 collection 定义；knowledge_chunks 无向量初始化文件
 ├── scripts/sync-rag-source.cjs     同步、检查知识部署副本
 ├── tests/                         AI 推荐、Embedding、索引、检索、评测及冻结文件回归测试

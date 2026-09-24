@@ -1,6 +1,15 @@
 const { URL } = require('url')
 
 module.exports = {
+  async testRagGeneration() {
+    // 固定问题的开发/管理诊断，不是微信用户 API，也不接受外部 query。
+    if (!['function', 'server'].includes(this.getClientInfo?.().source)) {
+      return { errCode: 'RAG_GENERATION_FORBIDDEN', errMsg: '请通过管理云函数执行固定 RAG Generation 测试' }
+    }
+    const { testRagGeneration } = require('./generator')
+    return testRagGeneration({ db: uniCloud.database(), httpclient: uniCloud.httpclient })
+  },
+
   async evaluateRobustness() {
     // 仅供开发/管理评测，不是普通用户 API；不接收外部 Query 或标签。
     if (!['function', 'server'].includes(this.getClientInfo?.().source)) {
