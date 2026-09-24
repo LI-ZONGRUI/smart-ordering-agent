@@ -123,19 +123,26 @@ for(const options of [{fails:true},{badResponse:true},{dishes:[{...source[0],pri
   })
 }
 test('云对象受限，不接受第三参数依赖覆盖',async()=>{
-  let calls=0
+  let calls=0,runnerCalls=0
   const sandbox={module:{exports:{}},require:name=>name==='./tools/executor'?{executeTool:async(name,args,options)=>{
     calls++;assert.equal(name,'search_menu');assert.equal(args.query,'牛肉');assert.equal(options.db,'server-db');return {errCode:0}
-  }}:{getToolDefinitions:()=>[]},uniCloud:{database:()=> 'server-db'}}
+  }}:name==='./tools/registry'?{getToolDefinitions:()=>[]}:{runAgent:async(query,options)=>{
+    runnerCalls++;assert.equal(query,'你好');assert.equal(options.db,'server-db');assert.equal(options.httpclient,'server-http')
+    return options.includeTrace?{errCode:0,trace:[]}:{errCode:0,query,answer:'你好',completed:true}
+  }},uniCloud:{database:()=> 'server-db',httpclient:'server-http'}}
   vm.runInNewContext(fs.readFileSync('uniCloud-aliyun/cloudfunctions/agent/index.obj.js','utf8'),sandbox)
   const obj=sandbox.module.exports
   for(const source of ['client','http',undefined]){
     const ctx={getClientInfo:()=>({source})}
     assert.equal((await obj.testTool.call(ctx,'search_menu',{query:'牛肉'})).errCode,'AGENT_TOOL_FORBIDDEN')
     assert.equal((await obj.getToolDefinitions.call(ctx)).errCode,'AGENT_TOOL_FORBIDDEN')
+    assert.equal((await obj.runForAdmin.call(ctx,'你好')).errCode,'AGENT_TOOL_FORBIDDEN')
   }
   await obj.testTool.call({getClientInfo:()=>({source:'function'})},'search_menu',{query:'牛肉'},{db:'fake'})
-  assert.equal(calls,1);assert.deepEqual(Object.keys(obj).sort(),['getToolDefinitions','testTool'])
+  assert.deepEqual(await obj.run('你好',{includeTrace:true}),{errCode:0,query:'你好',answer:'你好',completed:true})
+  assert.deepEqual(await obj.runForAdmin.call({getClientInfo:()=>({source:'server'})},'你好'),{errCode:0,trace:[]})
+  assert.equal(calls,1);assert.equal(runnerCalls,2)
+  assert.deepEqual(Object.keys(obj).sort(),['getToolDefinitions','run','runForAdmin','testTool'])
 })
 test('admin只允许server并仅转发toolName和args',async()=>{
   const calls=[]
@@ -145,8 +152,8 @@ test('admin只允许server并仅转发toolName和args',async()=>{
   await sandbox.exports.main({toolName:'search_menu',args:{query:'可乐'},db:'fake'},{SOURCE:'server'})
   assert.deepEqual(calls,[['search_menu',{query:'可乐'}]])
 })
-test('Agent代码不含模型API、写操作、动态用户路径执行',()=>{
-  const files=['index.obj.js','tools/registry.js','tools/executor.js','tools/menu-tools.js']
+test('V5.1工具层仍不含模型API、写操作、动态用户路径执行',()=>{
+  const files=['tools/registry.js','tools/executor.js','tools/menu-tools.js']
   const text=files.map(f=>fs.readFileSync('uniCloud-aliyun/cloudfunctions/agent/'+f,'utf8')).join('\n')
   for(const pattern of [/httpclient/,/DASHSCOPE_API_KEY/,/chat\/completions/,/\.add\(/,/\.update\(/,/\.remove\(/,/eval\(/,/new Function/,/require\(toolName/])assert.ok(!pattern.test(text.replace('seen.add(row._id)', '')),String(pattern))
 })

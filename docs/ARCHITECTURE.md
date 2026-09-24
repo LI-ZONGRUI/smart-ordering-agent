@@ -1,6 +1,6 @@
 # 项目整体架构
 
-这是Vue3 + uni-app + Pinia + uniCloud的微信点餐项目，包含传统点餐、独立LLM推荐、单轮RAG知识问答。模型不直接操作订单或购物车，当前不是Agent架构。
+这是Vue3 + uni-app + Pinia + uniCloud的微信点餐项目，包含传统点餐、独立LLM推荐、单轮RAG知识问答和只读Ordering Agent。当前Agent不直接操作订单或购物车，也不是完整自动点餐系统。
 
 ## 1. 组件关系
 
@@ -17,13 +17,16 @@ WeChat Mini Program
           ├─ orders → dishes校验 → orders写入/读取
           ├─ ai     → dishes → Model Studio / qwen3.8-flash
           │                      → 菜品ID校验、实时价格计算
-          └─ rag    → knowledge_chunks + dishes
+          ├─ rag    → knowledge_chunks + dishes
                        ├─ Model Studio / qwen3.7-text-embedding-flash
                        │    Query Embedding（512维）
                        ├─ Exact cosine Top-3（云对象内计算）
                        └─ Model Studio / qwen3.8-flash
                             answerable + evidence IDs
                             → 服务端验证与证据原文渲染
+          └─ agent  → Model Studio / qwen3.8-flash Function Calling
+                       → Tool Registry → Executor allowlist
+                       → Read-only Menu Tools → dishes
 ```
 
 Pinia是页面状态层，不是所有网络请求的必经网关。推荐与问答页直接通过services访问云对象；购物车不入库，订单store只缓存云端查询结果。
@@ -49,14 +52,15 @@ Pinia是页面状态层，不是所有网络请求的必经网关。推荐与问
 
 历史订单不随菜品改价或改名变化；预览价不替代下单时的服务器真实价格。
 
-## 4. AI推荐与RAG分工
+## 4. AI推荐、RAG与Agent分工
 
 | 能力 | 输入/上下文 | 输出与信任边界 |
 | --- | --- | --- |
 | ai.recommend(message) | 预算、口味、食材偏好；当前在售dishes | 模型选择菜品；服务器校验真实ID、状态、价格并计算totalPrice；用户手动加购 |
 | rag.answer(query) | 单个菜单知识问题；Top-3审核知识及关联实时dishes | 模型选择evidence IDs与answerable；服务器验证后只渲染证据原文；不操作购物车 |
+| agent.run(query) | 单个自然语言目标；三个只读实时菜单Tool | 模型通过原生Function Calling选择工具并观察结果；Executor校验和执行；不提供Cart/Order写操作 |
 
-价格、售卖状态必须来自实时数据库，不从模型自由文本提取。后端推荐和RAG分别维护职责，不互相伪装成同一套Agent。
+价格、售卖状态必须来自实时数据库，不从模型记忆获取。推荐、RAG与Agent分别维护职责；当前Agent没有把RAG注册为Tool，也不会代理推荐接口。
 
 ## 5. 离线索引与在线问答
 
@@ -74,17 +78,36 @@ Pinia是页面状态层，不是所有网络请求的必经网关。推荐与问
 
 `rag`管理方法通过独立admin云函数手动调用，涵盖索引、Retrieval Evaluation、Robustness、Generation诊断和Answer评测。平台来源限制用于开发管理入口，不是uni-id管理员身份认证。微信问答页只调用正式answer，不调用评测或索引方法。
 
-## 6. 输出和运行边界
+## 6. Agent Orchestration
+
+```text
+HBuilderX Admin Query（当前验收入口）
+ → Ordering Agent
+ → Qwen Native Function Calling
+ → Tool Registry（唯一Schema来源）
+ → Executor（allowlist与参数校验）
+ → Read-only Menu Tools
+ → categories / dishes
+ → role=tool结果回传Qwen
+ → 下一步Tool或最终回答
+```
+
+正式 `agent.run(query)` 与管理验收入口复用同一个有限Runner。模型返回的 `assistant.tool_calls` 被保留，服务器按匹配的 `tool_call_id` 追加 `role=tool` 结果，再进入下一轮决策。单次任务最多5轮模型决策、8次Tool调用；正式接口不返回Trace，`traceOnly` 只存在于HBuilderX管理入口的返回压缩层。
+
+三个只读Tool是 `search_menu`、`list_available_drinks` 和 `get_dish_detail`。真实验收中，“有可乐吗？没有的话推荐点别的喝的。”先查询可乐，在观察空结果后由模型再次决定查询在售饮料。第二步不是服务器固定fallback。当前没有Agent前端、跨请求会话记忆、Cart/Order Tool、写操作或用户确认协议。详见 [Agent Loop](agent/AGENT_LOOP.md)。
+
+## 7. 输出和运行边界
 
 - Generation只允许answerable、dishIds、usedKnowledgeIds；拒绝自由answer/claims等额外字段。
 - 服务器验证Top-3引用、实时在售菜品和双向关联，取回证据原文；true按原顺序换行拼接，false使用固定知识不足文案。
 - 正式Answer响应不包含similarity、embedding、Prompt、原始模型响应或密钥。前端只显示回答与依据标题/正文，相关菜品重新读取menu service。
 - 密钥只存在云对象远程环境变量；前端和admin不保存API Key。保留本地配置的Git忽略规则。
-- 当前没有支付、正式登录、多轮会话、流式输出、Agent或Tool Calling；也没有生产级容量与安全治理声明。
+- 当前没有支付、正式登录、多轮会话、流式输出或Agent写操作；只读Function Calling已经实现，但没有生产级容量与安全治理声明。
 
-## 7. 代码与文档入口
+## 8. 代码与文档入口
 
 - [前端页面](../src/pages) / [services](../src/services) / [Pinia stores](../src/stores)
 - [云对象与管理入口](../uniCloud-aliyun/cloudfunctions) / [数据库定义](../uniCloud-aliyun/database)
 - [V4总结](rag/V4_SUMMARY.md) / [Answer API](rag/ANSWER_API.md) / [端到端评测](rag/ANSWER_EVALUATION.md)
+- [V5.1 Tool Foundation](agent/TOOLS.md) / [V5.2 Agent Loop](agent/AGENT_LOOP.md)
 - [部署步骤](UNICLOUD_SETUP.md) / [README运行说明](../README.md)

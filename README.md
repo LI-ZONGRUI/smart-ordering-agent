@@ -1,8 +1,8 @@
-# 微信智能点餐与 RAG 菜单问答
+# 微信智能点餐、RAG 菜单问答与只读 Ordering Agent
 
-使用 **Vue 3 + uni-app + Composition API + Pinia + uniCloud + Qwen** 构建的微信点餐学习项目。围绕真实菜单完成点餐、云端订单持久化、自然语言菜品推荐，以及基于人工审核知识的单轮 RAG 菜单问答。
+使用 **Vue 3 + uni-app + Composition API + Pinia + uniCloud + Qwen** 构建的微信点餐学习项目。围绕真实菜单完成点餐、云端订单持久化、自然语言菜品推荐、基于人工审核知识的单轮RAG问答，以及基于原生Function Calling的只读Ordering Agent。
 
-**单轮 RAG 后端已完成端到端评测，菜单问答 UI 已通过真实微信开发者工具验收。** 当前不是生产级客服系统，也没有实现 Agent 或多轮聊天。
+**单轮RAG已完成端到端评测与微信UI验收；Read-only Ordering Agent已完成真实uniCloud + qwen3.8-flash多步Tool调用验收。** 当前不是生产级客服或完整自动点餐Agent，也没有多轮聊天记忆或写操作Agent Tool。
 
 - [整体架构](docs/ARCHITECTURE.md)
 - [V4 RAG 总结、设计演进与失败案例](docs/rag/V4_SUMMARY.md)
@@ -10,7 +10,7 @@
 
 ## 为什么做这个项目
 
-在可运行的点餐业务上验证两类不同的模型能力：一类理解预算和偏好并推荐真实菜品；另一类检索审核过的菜品知识回答问题。重点是区分模型判断与业务事实，并通过服务端验证和固定评测定位错误，而不仅是接通一个模型 API。
+在可运行的点餐业务上验证三类模型能力：理解预算和偏好并推荐真实菜品；检索审核知识回答问题；根据用户目标自主选择并串联实时菜单Tool。重点是区分模型判断与业务事实，并通过服务端验证、Tool执行边界和固定评测定位错误。
 
 ## 核心能力
 
@@ -20,6 +20,7 @@
 | 云端持久化 | categories / dishes / orders；提交订单时后端重新校验状态与价格，保存订单快照 |
 | AI 智能点餐 | Qwen3.8-Flash 理解预算、口味和食材偏好，返回1～3道真实菜品；后端校验ID、在售状态和价格 |
 | 菜单问答 | 独立页面调用 rag.answer(query)，支持1～200 Unicode字符的单轮问题，展示服务器回答、依据及实时相关菜品 |
+| Read-only Ordering Agent | Qwen原生Function Calling，自主调用三个真实菜单Tool，并根据Tool Result继续多步决策或停止 |
 | 知识与索引 | 21条人工审核知识，512维 Embedding，批量幂等索引、唯一ID及内容哈希 |
 | 评测 | Retrieval、Robustness、12-query端到端 Answerability / Evidence / Grounding 评测 |
 
@@ -36,9 +37,11 @@
       ├─ menu   → categories / dishes
       ├─ orders → dishes校价 → orders持久化
       ├─ ai     → dishes + Qwen3.8-Flash → 服务端校验推荐
-      └─ rag    → knowledge_chunks + dishes
+      ├─ rag    → knowledge_chunks + dishes
                     + Query Embedding + Qwen证据选择
                     → 服务端验证、原文渲染
+      └─ agent  → Qwen Function Calling → Registry / Executor
+                    → Read-only Menu Tools → dishes
 ```
 
 模型通过 Alibaba Cloud Model Studio 的 OpenAI-compatible API 调用，使用 `uniCloud.httpclient.request`。完整组件和数据边界见 [ARCHITECTURE.md](docs/ARCHITECTURE.md)。
@@ -57,12 +60,15 @@
 | Single-turn Answer | 正式 rag.answer(query)，诊断与正式接口复用共享逻辑 |
 | End-to-End Evaluation | 12条固定问题，区分检索遗漏、证据选择遗漏和拒答错误 |
 | WeChat Menu QA UI | 单次输入、回答、依据、相关菜品与正常拒答，真实微信验收通过 |
+| Read-only Ordering Agent | 三个菜单Tool、Executor allowlist、原生Function Calling和有限多步Agent Loop，真实云端验收通过 |
 
 ## AI / RAG 如何工作
 
 **AI 智能点餐**读取当前在售菜单，将必要字段提供给 Qwen。模型选择菜品后，服务器校验 ID、再次读取状态与价格、按分计算总价；加购复用 Pinia，订单走原有后端校价流程。LLM 不提供可信价格。
 
 **RAG 菜单问答**先将 Query 转为512维向量，从 verified knowledge_chunks 做 Exact Cosine Top-3，再查询关联实时菜品。Qwen仅返回 `answerable`、`dishIds`、`usedKnowledgeIds`；服务器验证引用，取回本次检索证据，按原文换行生成最终回答。模型不能自由改写最终事实措辞。
+
+**Read-only Ordering Agent**把V5.1三个真实菜单Tool作为唯一Registry，Qwen通过原生 `tool_calls` 自主选择工具；服务器解析参数并继续通过Executor allowlist和Schema校验，再以 `role=tool` 回传真实结果。Agent可根据第一次结果继续选择第二个Tool，但没有购物车、订单或其他写操作。RAG与Agent当前是两项独立能力，RAG尚未注册为Agent Tool。
 
 知识维护单向流转：
 
@@ -96,6 +102,8 @@ docs/rag/knowledge-source.json（唯一人工维护源）
 
 **Single-turn RAG menu QA has been integrated and validated in the WeChat mini-program.** 微信开发者工具已验证“有什么比较清爽的？”、“我想吃牛肉”的回答与依据，以及“有可乐吗”的正常知识不足拒答；没有把缺少知识错误表达为确定不存在。完整验收记录见 [V4总结](docs/rag/V4_SUMMARY.md)。
 
+**Read-only Ordering Agent已完成真实云端验收。** 对“有可乐吗？没有的话推荐点别的喝的。”，Qwen先调用 `search_menu`，观察count=0后再自主调用 `list_available_drinks`，取得真实在售柠檬茶；这不是程序写死的fallback。柠檬茶存在时会在一次Tool后停止，酸梅汤场景能识别“存在但售罄”，“你好”则不调用Tool。详见 [Agent Loop](docs/agent/AGENT_LOOP.md)。
+
 ## 如何运行
 
 准备 Node.js 20+、pnpm、HBuilderX 和微信开发者工具。在项目根目录执行：
@@ -113,8 +121,9 @@ pnpm run build:mp-weixin
 1. [uniCloud基础部署](docs/UNICLOUD_SETUP.md)：menu、orders及业务数据库。
 2. [索引说明](docs/rag/INDEXING.md)：知识副本、knowledge_chunks schema/唯一索引、rag部署与首次索引；已有空间不要重复初始化业务数据。
 3. [Answer API](docs/rag/ANSWER_API.md)：rag模型环境变量和管理测试入口。
+4. [Agent Loop](docs/agent/AGENT_LOOP.md)：agent独立环境变量、Function Calling协议、管理Trace和真实验收。
 
-ai读取 `DASHSCOPE_API_KEY`、`LLM_BASE_URL`、`LLM_MODEL`；rag独立读取 `DASHSCOPE_API_KEY`、`LLM_BASE_URL`、`EMBEDDING_MODEL`、`EMBEDDING_DIMENSION`、`RAG_LLM_MODEL`。Embedding为qwen3.7-text-embedding-flash/512，Generation为qwen3.8-flash；真实密钥只配置到云端，不能写入仓库。
+ai读取 `DASHSCOPE_API_KEY`、`LLM_BASE_URL`、`LLM_MODEL`；rag独立读取 `DASHSCOPE_API_KEY`、`LLM_BASE_URL`、`EMBEDDING_MODEL`、`EMBEDDING_DIMENSION`、`RAG_LLM_MODEL`；agent也在自身云对象中独立读取 `DASHSCOPE_API_KEY`、`LLM_BASE_URL`、`AGENT_LLM_MODEL`。Embedding为qwen3.7-text-embedding-flash/512，Generation和Agent目标模型为qwen3.8-flash；真实密钥只配置到云端，不能写入仓库。
 
 日常联调从HBuilderX“运行→运行到小程序模拟器→微信开发者工具”启动，保持“连接云端云函数”。不要同时运行CLI开发监听，避免争用 `dist/dev/mp-weixin`。从首页进入“AI智能点餐”或“菜单问答”。
 
@@ -129,7 +138,7 @@ pnpm run rag:check-source
 git diff --check
 ```
 
-V4.4.4收尾时417项本地测试通过，包括前端状态与service、后端校验、评测和冻结文件检查。本地测试使用模拟HTTP/数据库，不代表模型真实效果；远程评测需要人工通过管理入口运行。
+V5.2收尾时本地测试覆盖前端状态与service、后端校验、Agent Loop、管理Trace、RAG评测和冻结文件检查。本地Agent测试使用Mock Model；真实Agent效果由开发者通过管理入口另行验收。
 
 - clientId只是开发阶段匿名隔离，不是真正认证；未来可用uni-id/userId替代。不能当作正式用户授权。
 - 数据库客户端直连权限关闭，业务通过云对象访问；购物车在Pinia内存，订单持久化在云端。
@@ -138,9 +147,9 @@ V4.4.4收尾时417项本地测试通过，包括前端状态与service、后端�
 
 ## Known Limitations / Roadmap
 
-当前为21-chunk小知识库，12-query评测规模有限；仅支持单轮，Evidence Selection仍可能漏选，Answerability存在False Negative，Top-3可能不完整。尚无reranker、hybrid retrieval、query rewrite、conversation memory、Agent或Tool Calling，当前不是production-ready系统。
+当前为21-chunk小知识库，12-query评测规模有限；RAG仅支持单轮，Evidence Selection仍可能漏选，Answerability存在False Negative，Top-3可能不完整。Read-only Ordering Agent同样是单次用户任务，没有conversation memory、Cart/Order Tool、写操作或用户确认协议；当前不是production-ready系统。
 
-未来可先扩展人工评测和失败分析，再以冻结baseline比较检索/选择策略；身份认证、生产治理和更大规模数据需另行设计。多轮与V5 Agent仅为未来方向，本阶段未实现，也不承诺其一定优于现有单轮方案。
+未来可先扩展人工评测和失败分析，再以冻结baseline比较检索/选择策略；身份认证、生产治理和更大规模数据需另行设计。多轮记忆以及带确认协议的Cart/Order Action Tool属于后续阶段。
 
 ## 文档导航
 
@@ -151,4 +160,5 @@ V4.4.4收尾时417项本地测试通过，包括前端状态与service、后端�
 | [知识审核](docs/rag/REVIEW.md) / [索引结构](docs/rag/KNOWLEDGE_CHUNKS.md) | 来源、歧义、字段与索引 |
 | [Generation演进](docs/rag/GENERATION_TEST.md) | 自由回答到evidence-first的真实实验 |
 | [正式Answer接口](docs/rag/ANSWER_API.md) / [端到端评测](docs/rag/ANSWER_EVALUATION.md) | 调用合同、错误、指标和复现 |
+| [Agent Tool](docs/agent/TOOLS.md) / [Agent Loop](docs/agent/AGENT_LOOP.md) | 只读工具合同、Function Calling、循环边界与真实验收 |
 | [简历素材](docs/RESUME_NOTES.md) / [面试说明](docs/INTERVIEW_NOTES.md) | 求职表达，不属于产品运行功能 |

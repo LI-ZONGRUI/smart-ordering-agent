@@ -1,4 +1,4 @@
-// 这里只定义机器可读合同；V5.1 不向任何模型发送 tools，也不执行 Function Calling。
+// V5.1 在这里建立唯一机器可读合同；V5.2 只读取该合同发送给模型，工具执行仍由 Executor 控制。
 const definitions = [
   {
     type: 'function',
