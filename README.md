@@ -2,7 +2,7 @@
 
 本项目使用 Vue 3、uni-app CLI、Composition API 和 Pinia。首页、菜单、购物车、订单、我的五个 TabBar 页面保持原有结构。菜单和订单现已改为调用 uniCloud 云对象；购物车仍保存在本次运行的 Pinia 内存中。
 
-**当前状态：uniCloud 点餐闭环、LLM 智能点餐 V1，以及单轮 RAG 后端与端到端评测均已完成真实云端验证。** A single-turn RAG backend has been implemented and evaluated end-to-end. 正式微信 RAG 问答前端尚未接入，当前结果不代表完整生产客服系统或 answerability 已解决。
+**当前状态：uniCloud 点餐闭环、LLM 智能点餐 V1，以及单轮 RAG 后端与端到端评测均已完成真实云端验证。** A single-turn RAG backend has been implemented and evaluated end-to-end. 微信单轮菜单问答 UI 已接入并完成真实微信开发者工具验收，当前结果不代表完整生产客服系统或 answerability 已解决。
 
 已完成并验证：
 
@@ -75,7 +75,7 @@ docs/rag/knowledge-source.json（唯一人工维护源）
 | 首次正式索引 | 21 条知识插入 `knowledge_chunks` |
 | 第二次正式索引 | 21 条全部 skip，验证重复运行的幂等性 |
 
-第二次全部 skip 对应代码中的零 Embedding 请求分支；本地测试也覆盖该行为。这些索引现已用于下述 V4.3 检索与评测，以及 V4.4.1 固定 Query 的 RAG 生成诊断；原有 AI 菜品推荐业务未改为 RAG，正式单轮 rag.answer(query) 已实现并验证，微信 RAG 前端尚未接入。
+第二次全部 skip 对应代码中的零 Embedding 请求分支；本地测试也覆盖该行为。这些索引现已用于下述 V4.3 检索与评测，以及 V4.4.1 固定 Query 的 RAG 生成诊断；原有 AI 菜品推荐业务未改为 RAG，正式单轮 rag.answer(query) 已实现并验证，微信 RAG 前端已实现并完成真实验收。
 
 完整操作和失败处理见 [索引说明](docs/rag/INDEXING.md)，字段见 [knowledge_chunks 结构说明](docs/rag/KNOWLEDGE_CHUNKS.md)。
 
@@ -101,7 +101,7 @@ Retriever 使用 `qwen3.7-text-embedding-flash`、512 维、21 条知识，按�
 
 ### 已完成的边界
 
-V4.3 已完成 RAG indexing and retrieval pipeline 与评测；其冻结结果由下述 V4.4.1 最小 Generation 链路复用。正式单轮接口已在 V4.4.2 完成，微信 RAG 问答页面尚未实现，也没有加入 Reranker、Hybrid Search 或 Answerability classifier。
+V4.3 已完成 RAG indexing and retrieval pipeline 与评测；其冻结结果由下述 V4.4.1 最小 Generation 链路复用。正式单轮接口已在 V4.4.2 完成，微信 RAG 问答页面已实现并完成真实验收，也没有加入 Reranker、Hybrid Search 或 Answerability classifier。
 
 检索与评测是开发/管理工具：`testRetrieval()`、`testEmbedding()`、`testBatchEmbedding()` 保留作诊断；`rag-eval-admin` 与 `rag-robustness-eval-admin` 用于人工执行两套独立固定评测，页面不会自动调用。历史 Baseline、Retriever、Knowledge Source 与 Indexer 均保持冻结，没有为了提高指标修改排名或标签。
 
@@ -138,9 +138,39 @@ rag 继续从自身远程环境变量读取 `RAG_LLM_MODEL=qwen3.8-flash` 和现
 
 唯一 False Negative 为“酸梅汤是什么味道？”：`dish-8-taste` 已被检索，但 Generation 未选择并拒答。饮料问题存在 Retrieval availability 和 Evidence Selection 两层完整性损失。这些结果反映当前 **21-chunk 小型知识库、12-query 人工固定评测集**，不能推广为生产性能；Grounding 结构通过不等于语义相关、完整或判断正确。
 
-仍未完成：正式微信前端 RAG 问答体验、多轮聊天、Agent / Tool Calling、大规模 Evaluation，以及 Reranker / Hybrid Search 等实验。本次只保存 baseline，不调参、不进入 V4.4.4。
+仍未完成：多轮聊天、Agent / Tool Calling、大规模 Evaluation，以及 Reranker / Hybrid Search 等实验。该后端 baseline 保持冻结，前端接入不调整指标或后端行为。
 
 详见 [Answer API 与人工验收](docs/rag/ANSWER_API.md) 和 [真实端到端评测记录](docs/rag/ANSWER_EVALUATION.md)。HBuilderX 云函数本地 `*.param.json` 参数文件由 Git 忽略，不作为正式源文件提交。
+
+## V4.4.4：微信菜单问答 UI（已真实验收）
+
+**Single-turn RAG menu QA has been integrated and validated in the WeChat mini-program.**
+
+以下记录来自开发者提供的真实微信开发者工具验收，不是本地 mock；本次收尾仅更新文档、执行本地检查，没有再次调用远程 API。
+
+### 三个真实前端案例
+
+1. **有什么比较清爽的？**
+   - 成功进入独立“菜单问答”页面，正式 `rag.answer(query)` 正常调用。
+   - 页面展示服务器 grounded answer：鲜蔬沙拉项目描述为“清爽”；拍黄瓜中的黄瓜项目描述为“爽脆”；柠檬茶项目描述为具有柠檬香气。
+   - “依据”区域展示对应可信证据，没有暴露 knowledgeId、embedding、similarity 等内部字段。
+   - 未出现此前“解腻”“清爽的柠檬香气”等无依据扩写。
+   - supported Query 的 UI → rag.answer → grounded rendering 链路真实通过。
+2. **我想吃牛肉**
+   - 真实微信页面正常回答，包括番茄牛肉面使用番茄汤底并搭配牛肉、双椒牛肉由牛肉搭配青椒和红椒，以及番茄牛肉面主要配料为牛肉、番茄、面条、青菜等真实 evidence 内容。
+   - “依据”区域与回答对应。前端输入 → 正式单轮 rag.answer(query) → evidence selection → server rendering → 微信页面展示真实通过。
+3. **有可乐吗**
+   - 页面正常返回“当前提供的知识不足以回答这个问题。”。
+   - answerable=false 被作为正常业务结果，没有显示“系统错误”或“请求失败”，没有展示无关依据或相关菜品。
+   - 没有编造“有可乐”或“没有可乐”。当前知识库没有关于可乐的可靠知识，因此没有把“没有检索到”解释为“确定不存在”，符合预期的 grounded refusal。
+
+### 当前产品边界
+
+“菜单问答”是 **single-turn menu knowledge QA**，与“AI 智能点餐”推荐页独立。支持单个文本问题、正式 rag.answer(query)、服务器原文回答、可信依据、按 dishIds 获取实时菜单信息，以及正常展示 answerable=false。示例 chip 只填入文本，不自动请求；再次提问覆盖当前结果。
+
+当前没有多轮聊天、会话历史、Agent、Tool Calling、Streaming Chat、自动加购或自动下单，也不是通用客服机器人。相关菜品复用 menu service 的当前价格与状态，并跳转原菜品详情；技术失败使用固定友好提示，请求期间禁止重复提交。
+
+当前知识库仍为 **21 chunks**，后端 baseline 为 **12-query 人工固定评测集**。上述三个前端案例验证界面与后端链路，不是新增准确率评测，不能推广为生产环境性能或 production-ready AI assistant。既有91.67% Answerability baseline 与完整性、证据选择局限继续保留；本次未修改后端、Prompt、检索、评测集或知识库。
 
 ## 目录
 
@@ -155,7 +185,7 @@ rag 继续从自身远程环境变量读取 `RAG_LLM_MODEL=qwen3.8-flash` 和现
 │   │   ├── menu.js
 │   │   └── orders.js
 │   ├── stores/                     Pinia 购物车与云端订单列表缓存
-│   └── pages/                      八个页面（含 ai-recommend，TabBar 仍为五项）
+│   └── pages/                      九个页面（含 ai-recommend、rag-qa，TabBar 仍为五项）
 ├── uniCloud-aliyun/
 │   ├── cloudfunctions/
 │   │   ├── ai/                      testConnection、recommend

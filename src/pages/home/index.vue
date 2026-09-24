@@ -13,6 +13,12 @@
     </view>
 
     <view class="card">
+      <view class="section-title">菜单问答</view>
+      <text class="muted">问问菜品口味、配料和介绍</text>
+      <button class="primary-button menu-button" @click="goToMenuQuestion">菜单问答</button>
+    </view>
+
+    <view class="card">
       <view class="section-title">现在可以体验</view>
       <text class="muted">浏览云端菜品、加入购物车、提交订单，再到订单页查看记录。</text>
     </view>
@@ -20,6 +26,10 @@
 </template>
 
 <script setup>
+function goToMenuQuestion() {
+  uni.navigateTo({ url: '/pages/rag-qa/index' })
+}
+
 function goToAi() {
   uni.navigateTo({ url: '/pages/ai-recommend/index' })
 }
