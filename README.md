@@ -2,7 +2,7 @@
 
 本项目使用 Vue 3、uni-app CLI、Composition API 和 Pinia。首页、菜单、购物车、订单、我的五个 TabBar 页面保持原有结构。菜单和订单现已改为调用 uniCloud 云对象；购物车仍保存在本次运行的 Pinia 内存中。
 
-**当前状态：uniCloud 点餐闭环、LLM 智能点餐 V1，以及 V4 的知识索引、检索、评测和固定 Query 最小 RAG 生成链路均已完成真实环境人工验收。** A minimal end-to-end RAG loop has been validated with a fixed query. 当前通过管理入口验证，不代表任意用户问答、生产 RAG 或完整 answerability 已完成。
+**当前状态：uniCloud 点餐闭环、LLM 智能点餐 V1，以及单轮 RAG 后端与端到端评测均已完成真实云端验证。** A single-turn RAG backend has been implemented and evaluated end-to-end. 正式微信 RAG 问答前端尚未接入，当前结果不代表完整生产客服系统或 answerability 已解决。
 
 已完成并验证：
 
@@ -75,7 +75,7 @@ docs/rag/knowledge-source.json（唯一人工维护源）
 | 首次正式索引 | 21 条知识插入 `knowledge_chunks` |
 | 第二次正式索引 | 21 条全部 skip，验证重复运行的幂等性 |
 
-第二次全部 skip 对应代码中的零 Embedding 请求分支；本地测试也覆盖该行为。这些索引现已用于下述 V4.3 检索与评测，以及 V4.4.1 固定 Query 的 RAG 生成诊断；原有 AI 菜品推荐业务未改为 RAG，正式任意用户问答接口尚未实现。
+第二次全部 skip 对应代码中的零 Embedding 请求分支；本地测试也覆盖该行为。这些索引现已用于下述 V4.3 检索与评测，以及 V4.4.1 固定 Query 的 RAG 生成诊断；原有 AI 菜品推荐业务未改为 RAG，正式单轮 rag.answer(query) 已实现并验证，微信 RAG 前端尚未接入。
 
 完整操作和失败处理见 [索引说明](docs/rag/INDEXING.md)，字段见 [knowledge_chunks 结构说明](docs/rag/KNOWLEDGE_CHUNKS.md)。
 
@@ -101,7 +101,7 @@ Retriever 使用 `qwen3.7-text-embedding-flash`、512 维、21 条知识，按�
 
 ### 已完成的边界
 
-V4.3 已完成 RAG indexing and retrieval pipeline 与评测；其冻结结果由下述 V4.4.1 最小 Generation 链路复用。正式用户 RAG 问答接口和页面尚未实现，也没有加入 Reranker、Hybrid Search 或 Answerability classifier。
+V4.3 已完成 RAG indexing and retrieval pipeline 与评测；其冻结结果由下述 V4.4.1 最小 Generation 链路复用。正式单轮接口已在 V4.4.2 完成，微信 RAG 问答页面尚未实现，也没有加入 Reranker、Hybrid Search 或 Answerability classifier。
 
 检索与评测是开发/管理工具：`testRetrieval()`、`testEmbedding()`、`testBatchEmbedding()` 保留作诊断；`rag-eval-admin` 与 `rag-robustness-eval-admin` 用于人工执行两套独立固定评测，页面不会自动调用。历史 Baseline、Retriever、Knowledge Source 与 Indexer 均保持冻结，没有为了提高指标修改排名或标签。
 
@@ -113,9 +113,34 @@ V4.3 已完成 RAG indexing and retrieval pipeline 与评测；其冻结结果�
 
 真实复验返回 `errCode: 0`，答案由鲜蔬沙拉“清爽”、拍黄瓜“爽脆”、柠檬茶“具有柠檬香气”三条 evidence 原文组成，不再出现“解腻”或“清爽的柠檬香气”等扩写。这关闭了自由 answer 绕过 claims、以及模型 claim.text 在合法引用下扩写事实的输出路径。
 
-当前解决的是事实措辞的信任边界。模型仍可能漏选或错选合法 evidence、误判 answerable，检索 Top-3 也可能漏掉正确知识；不构成 formal correctness 或 semantic grounding 的整体保证。下一阶段仍是正式 `rag.answer(query)` 与多 Query Generation / Answerability Evaluation，本次不实现。
+当前解决的是事实措辞的信任边界。模型仍可能漏选或错选合法 evidence、误判 answerable，检索 Top-3 也可能漏掉正确知识；不构成 formal correctness 或 semantic grounding 的整体保证。后续 V4.4.2 / V4.4.3 已完成正式单轮接口与固定评测，结果见下节。
 
 rag 继续从自身远程环境变量读取 `RAG_LLM_MODEL=qwen3.8-flash` 和现有 Embedding 配置；密钥不进入源码。原有 AI 推荐、Retriever、Knowledge Source、Indexer、数据库结构及前端保持不变。完整真实演进、当前合同与按需复验步骤见 [Generation 验证记录](docs/rag/GENERATION_TEST.md)。
+
+## V4.4.2 / V4.4.3：单轮 RAG 后端与端到端评测（已真实验证）
+
+当前 RAG Backend 已完成：verified Knowledge Source V1、Embedding / Indexing Pipeline、21 条 knowledge_chunks、Exact Cosine Top-3 Retrieval、Retrieval Evaluation、Robustness Evaluation、Evidence-first Grounded Generation、正式 `rag.answer(query)` 和 End-to-End Generation / Answerability Evaluation。
+
+正式接口支持 1～200 Unicode 字符的单轮文本，通过实时 dishes 和 Qwen evidence selection 后，由服务器校验 IDs 并直接使用证据原文生成答案。不向正式客户端返回 similarity、向量、Prompt、内部诊断或原始模型响应。
+
+以下 baseline 来自开发者完成的真实云端运行，12 条全部完成、无执行失败：
+
+| 指标 | 真实结果 |
+| --- | --- |
+| Answerability Accuracy | 91.67%（11/12） |
+| Unsupported rejection | 100%（6/6） |
+| Retrieval Hit Rate | 100%（6/6 supported） |
+| Evidence Hit Rate | 83.33%（5/6 supported） |
+| Avg Retrieval Recall@3 | ≈80.83% |
+| Avg Evidence Precision | 75% |
+| Avg Evidence Recall | ≈55.83% |
+| Server Grounding Pass | 100%（12/12） |
+
+唯一 False Negative 为“酸梅汤是什么味道？”：`dish-8-taste` 已被检索，但 Generation 未选择并拒答。饮料问题存在 Retrieval availability 和 Evidence Selection 两层完整性损失。这些结果反映当前 **21-chunk 小型知识库、12-query 人工固定评测集**，不能推广为生产性能；Grounding 结构通过不等于语义相关、完整或判断正确。
+
+仍未完成：正式微信前端 RAG 问答体验、多轮聊天、Agent / Tool Calling、大规模 Evaluation，以及 Reranker / Hybrid Search 等实验。本次只保存 baseline，不调参、不进入 V4.4.4。
+
+详见 [Answer API 与人工验收](docs/rag/ANSWER_API.md) 和 [真实端到端评测记录](docs/rag/ANSWER_EVALUATION.md)。HBuilderX 云函数本地 `*.param.json` 参数文件由 Git 忽略，不作为正式源文件提交。
 
 ## 目录
 
@@ -140,7 +165,9 @@ rag 继续从自身远程环境变量读取 `RAG_LLM_MODEL=qwen3.8-flash` 和现
 │   │   ├── rag-index-admin/         手动执行索引的管理入口
 │   │   ├── rag-eval-admin/          Baseline 固定评测管理入口
 │   │   ├── rag-robustness-eval-admin/ Robustness 固定评测管理入口
-│   │   └── rag-generation-admin/    固定 Query Generation 诊断入口
+│   │   ├── rag-generation-admin/    固定 Query Generation 诊断入口
+│   │   ├── rag-answer-admin/        单轮 Answer 人工测试入口
+│   │   └── rag-answer-eval-admin/   固定12条端到端评测入口
 │   └── database/                    四个 collection 定义；knowledge_chunks 无向量初始化文件
 ├── scripts/sync-rag-source.cjs     同步、检查知识部署副本
 ├── tests/                         AI 推荐、Embedding、索引、检索、评测及冻结文件回归测试

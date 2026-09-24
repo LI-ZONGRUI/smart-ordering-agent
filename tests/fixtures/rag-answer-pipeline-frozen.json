@@ -1,0 +1,6 @@
+{
+  "uniCloud-aliyun/cloudfunctions/rag/generator.js": "6c9bcca7b10b884e395aa9b4e54b348ea2156c3e77088487355e394ceeb9f6a6",
+  "uniCloud-aliyun/cloudfunctions/rag/query-retrieval.js": "8fbc11fa5c85d0101fc999dca7439489b990d290d858f97eec48903f8edf4c9b",
+  "tests/rag-answer.test.cjs": "ebb1d1f613262b90f8e7f2a4f45c088a47f2abeb0a41eefce80478f1a7f09534",
+  "uniCloud-aliyun/cloudfunctions/rag-answer-admin/index.js": "efc14d4146859095575dd7ced934a5a694493e1509522261ea30465d77b591f1"
+}

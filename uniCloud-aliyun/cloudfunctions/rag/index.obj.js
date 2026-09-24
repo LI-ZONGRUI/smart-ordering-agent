@@ -1,6 +1,21 @@
 const { URL } = require('url')
 
 module.exports = {
+  async evaluateAnswers() {
+    // 固定评测集仅供管理运行，不接受客户端 Query、标签或模型覆盖。
+    if (!['function', 'server'].includes(this.getClientInfo?.().source)) {
+      return { errCode: 'ANSWER_EVAL_FORBIDDEN', errMsg: '请通过管理云函数执行 Answer 评测' }
+    }
+    const { evaluateAnswers } = require('./answer-evaluator')
+    return evaluateAnswers({ db: uniCloud.database(), httpclient: uniCloud.httpclient })
+  },
+
+  async answer(query) {
+    // 正式单轮接口只接收文本，不转发用户提供的 model、topK 或 Prompt。
+    const { answer } = require('./generator')
+    return answer(query, { db: uniCloud.database(), httpclient: uniCloud.httpclient })
+  },
+
   async testRagGeneration() {
     // 固定问题的开发/管理诊断，不是微信用户 API，也不接受外部 query。
     if (!['function', 'server'].includes(this.getClientInfo?.().source)) {

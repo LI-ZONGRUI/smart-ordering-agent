@@ -1,7 +1,7 @@
 {
-  "name": "rag",
+  "name": "rag-answer-eval-admin",
   "version": "1.0.0",
-  "main": "index.obj.js",
+  "main": "index.js",
   "cloudfunction-config": {
     "timeout": 240
   }

@@ -1,0 +1,108 @@
+{
+  "evaluationVersion": 1,
+  "knowledgeSourceSha256": "f341c287c97056b4766fd514532de31fc8a2b5cd0a3e76641283192fcd04f0a6",
+  "queries": [
+    {
+      "id": "clean",
+      "query": "有什么比较清爽的？",
+      "kind": "supported",
+      "expectedAnswerable": true,
+      "relevantKnowledgeIds": [
+        "dish-3-taste",
+        "dish-7-taste",
+        "dish-4-taste"
+      ]
+    },
+    {
+      "id": "beef",
+      "query": "我想吃牛肉",
+      "kind": "supported",
+      "expectedAnswerable": true,
+      "relevantKnowledgeIds": [
+        "dish-2-description",
+        "dish-2-ingredients",
+        "dish-6-description",
+        "dish-6-ingredients"
+      ]
+    },
+    {
+      "id": "drinks",
+      "query": "有什么饮料？",
+      "kind": "supported",
+      "expectedAnswerable": true,
+      "relevantKnowledgeIds": [
+        "dish-4-taste",
+        "dish-4-ingredients",
+        "dish-8-taste",
+        "dish-8-ingredients"
+      ]
+    },
+    {
+      "id": "cucumber-texture",
+      "query": "拍黄瓜是什么口感？",
+      "kind": "supported",
+      "expectedAnswerable": true,
+      "relevantKnowledgeIds": [
+        "dish-7-taste"
+      ]
+    },
+    {
+      "id": "plum-taste",
+      "query": "酸梅汤是什么味道？",
+      "kind": "supported",
+      "expectedAnswerable": true,
+      "relevantKnowledgeIds": [
+        "dish-8-taste"
+      ]
+    },
+    {
+      "id": "peppers",
+      "query": "哪些菜里有辣椒？",
+      "kind": "supported",
+      "expectedAnswerable": true,
+      "relevantKnowledgeIds": [
+        "dish-5-description",
+        "dish-5-ingredients",
+        "dish-6-description",
+        "dish-6-ingredients",
+        "dish-7-ingredients"
+      ]
+    },
+    {
+      "id": "invoice",
+      "query": "可以开发票吗？",
+      "kind": "unsupported-domain",
+      "expectedAnswerable": false
+    },
+    {
+      "id": "reservation",
+      "query": "可以订座吗？",
+      "kind": "unsupported-domain",
+      "expectedAnswerable": false
+    },
+    {
+      "id": "opening-hours",
+      "query": "你们几点营业？",
+      "kind": "unsupported-domain",
+      "expectedAnswerable": false
+    },
+    {
+      "id": "weather",
+      "query": "今天香港天气怎么样？",
+      "kind": "external-ood",
+      "expectedAnswerable": false
+    },
+    {
+      "id": "python",
+      "query": "Python 怎么安装？",
+      "kind": "external-ood",
+      "expectedAnswerable": false
+    },
+    {
+      "id": "arithmetic",
+      "query": "2 加 2 等于多少？",
+      "kind": "external-ood",
+      "expectedAnswerable": false
+    }
+  ]
+}

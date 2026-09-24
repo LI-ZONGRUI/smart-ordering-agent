@@ -11,3 +11,6 @@ unpackage/
 .hbuilderx/
 uniCloud-aliyun/spaceinfo.json
 uniCloud-aliyun/cloudfunctions/**/node_modules/
+
+# HBuilderX 云函数本地运行参数，不作为业务源码提交
+uniCloud-aliyun/cloudfunctions/**/*.param.json
