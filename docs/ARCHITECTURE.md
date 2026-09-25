@@ -14,7 +14,9 @@ WeChat Mini Program
           ↓
         uniCloud Cloud Objects
           ├─ menu   → categories、dishes
-          ├─ orders → dishes校验 → orders写入/读取
+          ├─ orders → 共享dishes校验/计价
+          │            ├─ previewOrder → 只读预览 → STOP
+          │            └─ createOrder → 再次校验 → orders写入/读取
           ├─ ai     → dishes → Model Studio / qwen3.8-flash
           │                      → 菜品ID校验、实时价格计算
           ├─ rag    → knowledge_chunks + dishes
@@ -50,10 +52,31 @@ Pinia是页面状态层，不是所有网络请求的必经网关。推荐与问
 1. menu service读取分类、菜品，详情页使用同一正式数据源。
 2. Pinia cart维护数量、删除、清空及预览总价，拦截售罄菜品。
 3. 确认订单只提交dishId、quantity、remark和clientId；不把客户端价格作为依据。
-4. orders云对象重新查询dishes，校验存在与在售状态，按分计算小计和总额，保存菜名、单价、数量、小计快照。
-5. 云端创建成功才清空购物车；失败保留。订单按clientId查询，重新打开仍可查看。
+4. `previewOrder(items)`与创建订单复用同一个服务端校验/计价核心，只读dishes并返回待确认明细；它不写orders，也不生成订单号。
+5. `createOrder(payload)`仍会重新查询dishes，校验存在与在售状态，按分计算小计和总额，保存菜名、单价、数量、小计快照。
+6. 云端创建成功才清空购物车；失败保留。订单按clientId查询，重新打开仍可查看。
 
-历史订单不随菜品改价或改名变化；预览价不替代下单时的服务器真实价格。
+历史订单不随菜品改价或改名变化；预览价不替代下单时的服务器真实价格。V5.5A Server-validated Order Preview已用真实uniCloud菜单数据完成验收，Agent仍没有Order Tool。
+
+当前订单阶段边界：
+
+```text
+Pinia Cart
+ → Order Preview Request
+ → orders.previewOrder()
+ → Shared Validation / Pricing
+ → Fresh dishes DB
+ → Server-priced Order Preview
+ → requiresConfirmation=true
+ → STOP
+
+Next phase（尚未实现）：
+Explicit Order Confirmation
+ → 再次 Server Validation / Pricing
+ → createOrder()
+```
+
+Preview与Create共享items校验、重复dishId拒绝、实时菜品查询、在售校验、1～99数量规则和整数分计价；订单最多包含1～30种菜品。Preview是server-validated checkout proposal，不是持久订单、交易、预留、支付意图、授权Token或不可变价格保证。真实验收中，柠檬茶两杯返回总价24元，售罄酸梅汤被 `ORDER_DISH_UNAVAILABLE` 拒绝；检查orders集合未观察到本次Preview创建的新记录。
 
 ## 4. AI推荐、RAG与Agent分工
 
@@ -124,4 +147,5 @@ RAG继续作为独立的单轮菜单知识问答能力，当前没有注册为Ag
 - [V5.1 Tool Foundation](agent/TOOLS.md) / [V5.2 Agent Loop](agent/AGENT_LOOP.md)
 - [V5.3 Action Proposal](agent/ACTIONS.md)
 - [V5.4 User Confirmation](agent/CONFIRMATION.md)
+- [V5.5A Order Preview](agent/ORDER_PREVIEW.md)
 - [部署步骤](UNICLOUD_SETUP.md) / [README运行说明](../README.md)

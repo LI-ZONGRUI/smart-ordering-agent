@@ -65,6 +65,7 @@
 | Read-only Ordering Agent | 三个菜单Tool、Executor allowlist、原生Function Calling和有限多步Agent Loop，真实云端验收通过 |
 | Cart Action Proposal | `prepare_add_to_cart`重新查询菜品状态与价格，生成无副作用的Pending Action；后端本身不修改购物车 |
 | Cart Confirmation UI | 用户通过按钮确认提案；前端重新读取实时菜单，状态与价格一致后才调用现有Pinia购物车；真实微信验收通过 |
+| Server Order Preview | `orders.previewOrder(items)`与创建订单共用实时校验/计价核心；只返回待确认明细，不写订单，已通过真实uniCloud菜单数据验收 |
 
 ## AI / RAG 如何工作
 
@@ -75,6 +76,8 @@
 **Ordering Agent**把Registry作为唯一Tool定义源，Qwen通过原生 `tool_calls` 自主选择工具；服务器解析参数并继续通过Executor allowlist和Schema校验，再以 `role=tool` 回传真实结果。V5.3新增的 `prepare_add_to_cart` 只接受dishId和数量，重新查询真实状态与价格并生成待确认提案；它不会修改Pinia购物车。RAG与Agent当前是两项独立能力，RAG尚未注册为Agent Tool。
 
 **V5.4前端确认流程**只接受正式 `agent.run()` 返回的合法提案。用户点击确认后，页面重新读取真实菜单；菜品不存在、售罄或价格变化都会让旧提案失效。只有校验通过后才显式调用现有Pinia `addDish`。V5.4 frontend confirmation flow has been integrated and validated in the WeChat mini-program.
+
+**V5.5A订单预览**把实时菜品校验、数据库价格读取和整数分计价抽成 `previewOrder()` / `createOrder()` 的共享核心。Preview只读dishes并返回 `requiresConfirmation=true`，不会生成订单或写orders；正式创建时仍会再次查询和计价。**Server-validated order preview has been validated against the real uniCloud menu data.** 详见 [Order Preview](docs/agent/ORDER_PREVIEW.md)。
 
 知识维护单向流转：
 
@@ -114,6 +117,8 @@ docs/rag/knowledge-source.json（唯一人工维护源）
 
 **V5.4微信确认流程已真实验收。** 柠檬茶提案确认前购物车保持不变；点击确认后，前端重新读取实时菜单并验证状态、12元单价与提案金额，随后复用Pinia准确增加2杯。取消不会再次调用Qwen、读取菜单或修改购物车；售罄酸梅汤不会产生确认卡。准确能力名称是：**Action-capable Ordering Agent with server-validated pending actions, explicit user confirmation, and frontend cart execution.**
 
+**V5.5A Server-validated Order Preview已完成真实uniCloud验收。** 柠檬茶两杯的真实Preview由数据库返回名称与12元单价，服务端计算总价24元；售罄酸梅汤返回 `ORDER_DISH_UNAVAILABLE`。验收后检查orders集合，未观察到本次Preview创建的新订单记录。该能力仍是需要确认的checkout proposal；Agent Order Tool、Order Pending Action、Agent驱动createOrder、订单明确确认、自动结算与支付均未实现。
+
 ## 如何运行
 
 准备 Node.js 20+、pnpm、HBuilderX 和微信开发者工具。在项目根目录执行：
@@ -134,6 +139,7 @@ pnpm run build:mp-weixin
 4. [Agent Loop](docs/agent/AGENT_LOOP.md)：agent独立环境变量、Function Calling协议、管理Trace和真实验收。
 5. [Action Proposal](docs/agent/ACTIONS.md)：购物车待确认动作、服务端校价和无副作用边界。
 6. [User Confirmation](docs/agent/CONFIRMATION.md)：微信确认按钮、实时菜单复核与Pinia购物车执行边界。
+7. [Order Preview](docs/agent/ORDER_PREVIEW.md)：服务端只读订单预览、共享校验计价和HBuilderX验收参数。
 
 ai读取 `DASHSCOPE_API_KEY`、`LLM_BASE_URL`、`LLM_MODEL`；rag独立读取 `DASHSCOPE_API_KEY`、`LLM_BASE_URL`、`EMBEDDING_MODEL`、`EMBEDDING_DIMENSION`、`RAG_LLM_MODEL`；agent也在自身云对象中独立读取 `DASHSCOPE_API_KEY`、`LLM_BASE_URL`、`AGENT_LLM_MODEL`。Embedding为qwen3.7-text-embedding-flash/512，Generation和Agent目标模型为qwen3.8-flash；真实密钥只配置到云端，不能写入仓库。
 
@@ -175,4 +181,5 @@ git diff --check
 | [Agent Tool](docs/agent/TOOLS.md) / [Agent Loop](docs/agent/AGENT_LOOP.md) | 只读工具合同、Function Calling、循环边界与真实验收 |
 | [Action Proposal](docs/agent/ACTIONS.md) | Action Preparation Tool、Pending Action与确认边界 |
 | [User Confirmation](docs/agent/CONFIRMATION.md) | 显式UI确认、实时菜单复核、Pinia执行与失效规则 |
+| [Order Preview](docs/agent/ORDER_PREVIEW.md) | 服务端校验的只读订单预览、共享计价与创建时二次校验 |
 | [简历素材](docs/RESUME_NOTES.md) / [面试说明](docs/INTERVIEW_NOTES.md) | 求职表达，不属于产品运行功能 |

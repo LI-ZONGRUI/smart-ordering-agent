@@ -1,4 +1,9 @@
 const crypto = require('crypto')
+const {
+  isOrderBusinessError,
+  toSafeOrderBusinessResult,
+  validateAndPriceOrderItems
+} = require('./order-pricing')
 const db = uniCloud.database()
 
 function checkClientId(clientId) {
@@ -13,67 +18,27 @@ module.exports = {
     if (!payload || typeof payload !== 'object') throw new Error('订单内容无效')
     const { clientId, items, remark = '' } = payload
     checkClientId(clientId)
-    if (!Array.isArray(items) || items.length === 0 || items.length > 30) {
-      throw new Error('请选择 1～30 种菜品')
-    }
     if (typeof remark !== 'string' || remark.length > 200) {
       throw new Error('备注不能超过 200 字')
     }
 
-    const quantities = new Map()
-    for (const item of items) {
-      if (!item || typeof item.dishId !== 'string' || !item.dishId ||
-          !Number.isInteger(item.quantity) || item.quantity < 1 || item.quantity > 99 ||
-          quantities.has(item.dishId)) {
-        throw new Error('菜品或数量无效，请返回购物车检查')
-      }
-      quantities.set(item.dishId, item.quantity)
+    // Preview和Create共享同一个实时菜品校验与计价核心；Create每次仍会重新查询。
+    let priced
+    try {
+      priced = await validateAndPriceOrderItems(items, { db })
+    } catch (error) {
+      // Create保持原有普通Error文案，避免改变已经上线的订单页面错误处理。
+      if (isOrderBusinessError(error)) throw new Error(error.message)
+      throw error
     }
-
-    const dishIds = [...quantities.keys()]
-    const result = await db.collection('dishes')
-      .where({ _id: db.command.in(dishIds) })
-      .get()
-    const dishMap = new Map(result.data.map((dish) => [dish._id, dish]))
-
-    let totalCount = 0
-    let totalCents = 0
-    const orderItems = dishIds.map((dishId) => {
-      const dish = dishMap.get(dishId)
-      if (!dish) throw new Error('有菜品已下架，请返回购物车检查')
-      if (dish.status !== 'on_sale') throw new Error(`${dish.name} 已售罄，请返回购物车删除`)
-
-      const price = dish.price
-      if (typeof dish.name !== 'string' || !dish.name ||
-          typeof price !== 'number' || !Number.isFinite(price) || price < 0 ||
-          Math.abs(Math.round(price * 100) - price * 100) > 0.000001) {
-        throw new Error('菜品名称或价格数据无效')
-      }
-      const quantity = quantities.get(dishId)
-      const priceCents = Math.round(price * 100)
-      const subtotalCents = priceCents * quantity
-      if (!Number.isSafeInteger(subtotalCents) || !Number.isSafeInteger(totalCents + subtotalCents)) {
-        throw new Error('订单金额超出范围')
-      }
-      totalCount += quantity
-      totalCents += subtotalCents
-
-      // 前端只传菜品 ID 和数量。价格必须从云数据库重新读取，防止前端改价后少付。
-      // 这里复制名称与单价，之后菜品改名或改价也不会改动历史订单。
-      return {
-        dishId,
-        name: dish.name,
-        price: priceCents / 100,
-        quantity,
-        subtotal: subtotalCents / 100
-      }
-    })
+    const orderItems = priced.items.map(item => ({ dishId: item.dishId, name: item.name,
+      price: item.unitPrice, quantity: item.quantity, subtotal: item.lineTotal }))
 
     const order = {
       orderNo: `OD${Date.now()}${crypto.randomBytes(3).toString('hex').toUpperCase()}`,
       items: orderItems,
-      totalPrice: totalCents / 100,
-      totalCount,
+      totalPrice: priced.totalPrice,
+      totalCount: priced.totalQuantity,
       remark: remark.trim(),
       status: 'pending',
       clientId,
@@ -81,6 +46,28 @@ module.exports = {
     }
     const added = await db.collection('orders').add(order)
     return { _id: added.id, ...order }
+  },
+
+  async previewOrder(items) {
+    // Preview只接受dishId和quantity，且只读dishes；不会写orders或生成订单号。
+    let priced
+    try {
+      priced = await validateAndPriceOrderItems(items, { db, strictItems: true })
+    } catch (error) {
+      // 只恢复共享核心明确标记的业务错误；其他异常统一成固定Preview错误。
+      const businessResult = toSafeOrderBusinessResult(error)
+      if (businessResult) return businessResult
+      return { errCode: 'ORDER_PREVIEW_FAILED', errMsg: '订单预览未完成，请稍后重试' }
+    }
+    return {
+      errCode: 0,
+      preview: {
+        items: priced.items,
+        totalQuantity: priced.totalQuantity,
+        totalPrice: priced.totalPrice,
+        requiresConfirmation: true
+      }
+    }
   },
 
   async getOrders(clientId) {
