@@ -4,14 +4,14 @@
     <view class="intro muted">可以查询实时菜单，也可以帮你准备加入购物车操作。每次处理一个请求。</view>
 
     <view class="card">
-      <textarea v-model="query" class="query-input" :maxlength="-1" :disabled="loading || confirming"
+      <textarea v-model="query" class="query-input" :maxlength="-1" :disabled="loading || confirming || orderPreviewLoading"
         placeholder="例如：把柠檬茶加两杯到购物车" />
       <view class="counter muted">{{ queryLength }}/200</view>
       <view class="examples">
         <button v-for="example in examples" :key="example" class="example-chip" size="mini"
-          :disabled="loading || confirming" @click="fillExample(example)">{{ example }}</button>
+          :disabled="loading || confirming || orderPreviewLoading" @click="fillExample(example)">{{ example }}</button>
       </view>
-      <button class="primary-button" :disabled="loading || confirming" :loading="loading" @click="submitQuery">
+      <button class="primary-button" :disabled="loading || confirming || orderPreviewLoading" :loading="loading" @click="submitQuery">
         {{ loading ? '处理中...' : '发送请求' }}
       </button>
     </view>
@@ -24,12 +24,12 @@
       <text class="answer-text">{{ result.answer }}</text>
     </view>
 
-    <view v-if="pendingAction" class="card action-card">
+    <view v-if="cartPendingAction" class="card action-card">
       <view class="section-title">待确认操作</view>
-      <view class="action-name">{{ pendingAction.name }}</view>
-      <view class="action-line"><text>数量</text><text>× {{ pendingAction.quantity }}</text></view>
-      <view class="action-line"><text>单价</text><text>¥{{ pendingAction.unitPrice.toFixed(2) }}</text></view>
-      <view class="action-line total-line"><text>合计</text><text class="price">¥{{ pendingAction.totalPrice.toFixed(2) }}</text></view>
+      <view class="action-name">{{ cartPendingAction.name }}</view>
+      <view class="action-line"><text>数量</text><text>× {{ cartPendingAction.quantity }}</text></view>
+      <view class="action-line"><text>单价</text><text>¥{{ cartPendingAction.unitPrice.toFixed(2) }}</text></view>
+      <view class="action-line total-line"><text>合计</text><text class="price">¥{{ cartPendingAction.totalPrice.toFixed(2) }}</text></view>
       <button class="primary-button" :disabled="loading || confirming" :loading="confirming" @click="confirmAction">
         {{ confirming ? '正在确认菜品...' : '确认加入购物车' }}
       </button>
@@ -41,6 +41,36 @@
       {{ actionStatus }}
       <button v-if="actionStatusType === 'success'" class="cart-button" @click="goToCart">查看购物车</button>
     </view>
+
+    <view class="card checkout-card">
+      <view class="section-title">当前购物车</view>
+      <view class="muted">{{ cartItemCount > 0 ? `共 ${cartItemCount} 件商品` : '购物车为空' }}</view>
+      <button class="primary-button checkout-button"
+        :disabled="cartItemCount === 0 || loading || confirming || orderPreviewLoading"
+        :loading="orderPreviewLoading" @click="generateOrderPreview">
+        {{ orderPreviewLoading ? '正在生成...' : '生成订单预览' }}
+      </button>
+    </view>
+
+    <view v-if="orderPendingAction" class="card order-card">
+      <view class="section-title">订单预览</view>
+      <view v-for="item in orderPendingAction.items" :key="item.dishId" class="order-item">
+        <view class="action-line"><text class="order-name">{{ item.name }} × {{ item.quantity }}</text></view>
+        <view class="action-line muted"><text>单价 ¥{{ item.unitPrice.toFixed(2) }}</text><text>小计 ¥{{ item.lineTotal.toFixed(2) }}</text></view>
+      </view>
+      <view class="action-line"><text>商品总数量</text><text>{{ orderPendingAction.totalQuantity }} 件</text></view>
+      <view class="action-line total-line"><text>合计</text><text class="price">¥{{ orderPendingAction.totalPrice.toFixed(2) }}</text></view>
+      <view class="proposal-tip muted">确认仅表示你认可当前预览信息，本阶段不会创建订单。</view>
+      <button class="primary-button" :disabled="loading || confirming || orderPreviewLoading || orderProposalConfirmed"
+        @click="confirmOrderProposal">确认订单信息</button>
+      <button class="cancel-button" :disabled="loading || confirming || orderPreviewLoading"
+        @click="cancelOrderProposal">取消</button>
+    </view>
+
+    <view v-if="orderStatus" class="card"
+      :class="{ 'success-text': orderStatusType === 'success', 'error-text': orderStatusType === 'error' }">
+      {{ orderStatus }}
+    </view>
   </view>
 </template>
 
@@ -48,6 +78,7 @@
 import { computed, ref } from 'vue'
 import { runOrderingAgent, executePendingCartAction } from '../../services/agent'
 import { getDishes } from '../../services/menu'
+import { isSameCartSnapshot, previewOrder } from '../../services/orders'
 import { useCartStore } from '../../stores/cart'
 
 const cartStore = useCartStore()
@@ -55,34 +86,51 @@ const query = ref('')
 const loading = ref(false)
 const result = ref(null)
 const errorMessage = ref('')
-const pendingAction = ref(null)
+const cartPendingAction = ref(null)
 const confirming = ref(false)
 const actionStatus = ref('')
 const actionStatusType = ref('')
+const orderPreviewLoading = ref(false)
+const orderPendingAction = ref(null)
+const orderCartSnapshot = ref([])
+const orderProposalConfirmed = ref(false)
+const orderStatus = ref('')
+const orderStatusType = ref('')
+const cartItems = computed(() => Array.isArray(cartStore.items) ? cartStore.items : [])
+const cartItemCount = computed(() => cartItems.value.reduce((sum, item) => sum + item.quantity, 0))
 const queryLength = computed(() => Array.from(query.value).length)
 const examples = ['把柠檬茶加两杯到购物车', '有可乐吗？没有的话推荐别的喝的。', '你好']
 
 function clearPreviousResult() {
   result.value = null
   errorMessage.value = ''
-  pendingAction.value = null
+  cartPendingAction.value = null
   actionStatus.value = ''
   actionStatusType.value = ''
+  clearOrderProposal()
+  orderStatus.value = ''
+  orderStatusType.value = ''
+}
+
+function clearOrderProposal() {
+  orderPendingAction.value = null
+  orderCartSnapshot.value = []
+  orderProposalConfirmed.value = false
 }
 
 function fillExample(example) {
-  if (!loading.value && !confirming.value) query.value = example
+  if (!loading.value && !confirming.value && !orderPreviewLoading.value) query.value = example
 }
 
 async function submitQuery() {
-  if (loading.value || confirming.value) return
+  if (loading.value || confirming.value || orderPreviewLoading.value) return
   // 新请求先让旧提案失效，避免把旧动作绑定到新的用户输入。
   clearPreviousResult()
   loading.value = true
   try {
     const response = await runOrderingAgent(query.value)
     result.value = response
-    pendingAction.value = response.pendingAction || null
+    cartPendingAction.value = response.pendingAction || null
   } catch (error) {
     errorMessage.value = error.message
   } finally {
@@ -91,21 +139,21 @@ async function submitQuery() {
 }
 
 async function confirmAction() {
-  if (loading.value || confirming.value || !pendingAction.value) return
+  if (loading.value || confirming.value || !cartPendingAction.value) return
   confirming.value = true // 必须在第一个await之前设置，阻止双击执行两次。
   actionStatus.value = ''
   actionStatusType.value = ''
-  const action = pendingAction.value
+  const action = cartPendingAction.value
   try {
     const executed = await executePendingCartAction(action, {
       loadDishes: getDishes,
       addDish: (dish, quantity) => cartStore.addDish(dish, quantity)
     })
-    pendingAction.value = null
+    cartPendingAction.value = null
     actionStatus.value = `已加入购物车：${executed.name} × ${executed.quantity}`
     actionStatusType.value = 'success'
   } catch (error) {
-    if (error.invalidateAction) pendingAction.value = null
+    if (error.invalidateAction) cartPendingAction.value = null
     actionStatus.value = error.message
     actionStatusType.value = 'error'
   } finally {
@@ -114,10 +162,51 @@ async function confirmAction() {
 }
 
 function cancelAction() {
-  if (loading.value || confirming.value || !pendingAction.value) return
-  pendingAction.value = null
+  if (loading.value || confirming.value || !cartPendingAction.value) return
+  cartPendingAction.value = null
   actionStatus.value = '已取消。'
   actionStatusType.value = 'cancelled'
+}
+
+async function generateOrderPreview() {
+  if (loading.value || confirming.value || orderPreviewLoading.value || cartItemCount.value === 0) return
+  clearOrderProposal()
+  orderStatus.value = ''
+  orderStatusType.value = ''
+  orderPreviewLoading.value = true
+  try {
+    const preview = await previewOrder(cartItems.value)
+    orderPendingAction.value = preview.orderPendingAction
+    orderCartSnapshot.value = preview.cartSnapshot
+  } catch (error) {
+    clearOrderProposal()
+    orderStatus.value = error.message
+    orderStatusType.value = 'error'
+  } finally {
+    orderPreviewLoading.value = false
+  }
+}
+
+function confirmOrderProposal() {
+  if (loading.value || confirming.value || orderPreviewLoading.value ||
+      !orderPendingAction.value || orderProposalConfirmed.value) return
+  // 确认前重读Pinia购物车；菜品或数量变化都会让旧的服务端预览失效。
+  if (!isSameCartSnapshot(cartItems.value, orderCartSnapshot.value)) {
+    clearOrderProposal()
+    orderStatus.value = '购物车已发生变化，请重新生成订单预览。'
+    orderStatusType.value = 'error'
+    return
+  }
+  orderProposalConfirmed.value = true
+  orderStatus.value = '订单信息已确认，尚未创建订单。'
+  orderStatusType.value = 'success'
+}
+
+function cancelOrderProposal() {
+  if (loading.value || confirming.value || orderPreviewLoading.value || !orderPendingAction.value) return
+  clearOrderProposal()
+  orderStatus.value = '已取消订单预览。'
+  orderStatusType.value = 'cancelled'
 }
 
 function goToCart() {
@@ -137,6 +226,11 @@ function goToCart() {
 .action-line { display: flex; justify-content: space-between; margin: 14rpx 0; }
 .total-line { padding-top: 14rpx; border-top: 1rpx solid #e8eee9; }
 .cancel-button, .cart-button { margin-top: 16rpx; }
+.checkout-button { margin-top: 22rpx; }
+.order-card { border: 2rpx solid #d9eadf; }
+.order-item { padding: 16rpx 0; border-bottom: 1rpx solid #e8eee9; }
+.order-name { font-weight: 600; }
+.proposal-tip { margin: 20rpx 0; line-height: 1.6; }
 .error-text { color: #a63e2b; }
 .success-text { color: #2d8055; }
 </style>

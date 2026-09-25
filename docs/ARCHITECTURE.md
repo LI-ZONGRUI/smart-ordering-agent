@@ -1,6 +1,6 @@
 # 项目整体架构
 
-这是Vue3 + uni-app + Pinia + uniCloud的微信点餐项目，包含传统点餐、独立LLM推荐、单轮RAG知识问答和Ordering Agent。当前Agent后端只生成购物车动作提案；用户在前端明确确认并通过实时菜单复核后，才修改Pinia购物车。它不操作订单，也不是完整自动点餐系统。
+这是Vue3 + uni-app + Pinia + uniCloud的微信点餐项目，包含传统点餐、独立LLM推荐、单轮RAG知识问答和Ordering Agent。当前Agent后端只生成购物车动作提案；用户在前端明确确认并通过实时菜单复核后，才修改Pinia购物车。结算提案由Pinia购物车直接调用orders服务，不经过模型；当前仍不创建订单，也不是完整自动点餐系统。
 
 ## 1. 组件关系
 
@@ -62,21 +62,24 @@ Pinia是页面状态层，不是所有网络请求的必经网关。推荐与问
 
 ```text
 Pinia Cart
- → Order Preview Request
+ → only dishId / quantity
  → orders.previewOrder()
  → Shared Validation / Pricing
  → Fresh dishes DB
- → Server-priced Order Preview
- → requiresConfirmation=true
+ → Server Validated Checkout Proposal
+ → Frontend Structure / Cents Validation
+ → Order Pending Action
+ → Explicit Information Confirmation
  → STOP
 
-Next phase（尚未实现）：
+V5.5C（下一阶段，尚未实现）：
 Explicit Order Confirmation
- → 再次 Server Validation / Pricing
  → createOrder()
+ → 再次 Server Validation / Pricing
+ → Persisted Order
 ```
 
-Preview与Create共享items校验、重复dishId拒绝、实时菜品查询、在售校验、1～99数量规则和整数分计价；订单最多包含1～30种菜品。Preview是server-validated checkout proposal，不是持久订单、交易、预留、支付意图、授权Token或不可变价格保证。真实验收中，柠檬茶两杯返回总价24元，售罄酸梅汤被 `ORDER_DISH_UNAVAILABLE` 拒绝；检查orders集合未观察到本次Preview创建的新记录。
+Preview与Create共享items校验、重复dishId拒绝、实时菜品查询、在售校验、1～99数量规则和整数分计价；订单最多包含1～30种菜品。Preview是server-validated checkout proposal，不是持久订单、交易、预留、支付意图、授权Token或不可变价格保证。真实验收中，柠檬茶两杯返回总价24元，售罄酸梅汤被 `ORDER_DISH_UNAVAILABLE` 拒绝；检查orders集合未观察到本次Preview创建的新记录。V5.5B前端保存dishId/quantity快照，确认信息时检测购物车变化；确认只改变页面状态。**Checkout proposal flow has been integrated and validated in the WeChat mini-program.**
 
 ## 4. AI推荐、RAG与Agent分工
 
@@ -127,6 +130,10 @@ Single Query（管理入口或微信Agent页面）
 
 三个Read Tool是 `search_menu`、`list_available_drinks` 和 `get_dish_detail`。V5.3增加 `prepare_add_to_cart` Action Preparation Tool：它重新查询dishes、按服务端价格计算金额，只生成 `requiresConfirmation:true` 的Pending Action。V5.4微信页面通过明确按钮确认，再调用现有菜单服务复核状态与价格，最后显式调用Pinia `addDish`；没有动态动作派发、云端购物车或订单写Tool。详见 [Agent Loop](agent/AGENT_LOOP.md)、[Action Proposal](agent/ACTIONS.md) 与 [User Confirmation](agent/CONFIRMATION.md)。
 
+V5.5B在同一Agent页面增加独立的 `orderPendingAction`。它从Pinia购物车发起确定性的orders Preview，不调用Agent或Qwen；服务器响应经字段、数量和整数分金额校验后才显示。信息确认前再次比较购物车快照，变化即失效。`cartPendingAction` 与 `orderPendingAction` 互不混用，详见 [Checkout Proposal](agent/ORDER_PROPOSAL.md)。
+
+V5.5B真实微信验收确认：柠檬茶两杯显示单价12元、合计24元；“确认订单信息”后购物车不变且orders集合无新增记录；测试菜品临时设为 `sold_out` 时显示安全业务错误且不生成确认卡。跨页保留旧Preview再修改Cart的场景受当前页面生命周期和TabBar导航影响，本次没有稳定复现；数量改变、项目新增和删除导致快照失效由自动化测试覆盖。该快照机制是客户端提案一致性保护，不是数据库并发控制。
+
 V5.4已在微信开发者工具完成真实验收：柠檬茶数量2的提案在确认前不改变购物车，确认并通过实时复核后准确增加2杯；取消不产生副作用；售罄酸梅汤不显示确认卡。这里的重新查询缓解Pending Action生成与用户点击之间的TOCTOU数据变化，但客户端Pinia不是事务系统，订单创建仍必须由orders云对象重新校验状态和价格。
 
 RAG继续作为独立的单轮菜单知识问答能力，当前没有注册为Agent Tool。
@@ -148,4 +155,5 @@ RAG继续作为独立的单轮菜单知识问答能力，当前没有注册为Ag
 - [V5.3 Action Proposal](agent/ACTIONS.md)
 - [V5.4 User Confirmation](agent/CONFIRMATION.md)
 - [V5.5A Order Preview](agent/ORDER_PREVIEW.md)
+- [V5.5B Checkout Proposal](agent/ORDER_PROPOSAL.md)
 - [部署步骤](UNICLOUD_SETUP.md) / [README运行说明](../README.md)

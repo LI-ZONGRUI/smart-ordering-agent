@@ -30,8 +30,12 @@ function loadService(options = {}) {
 }
 
 function loadPage(options = {}) {
-  const calls = { run: 0, execute: 0, add: 0, menu: 0, navigation: [] }
-  const cartStore = { addDish(dish, quantity) { calls.add += 1; return options.addDish ? options.addDish(dish, quantity) : true } }
+  const calls = { run: 0, execute: 0, add: 0, menu: 0, preview: 0, clear: 0, navigation: [] }
+  const cartStore = {
+    items: options.cartItems || [],
+    addDish(dish, quantity) { calls.add += 1; return options.addDish ? options.addDish(dish, quantity) : true },
+    clearCart() { calls.clear += 1; cartStore.items = [] }
+  }
   const context = {
     ref: value => ({ value }),
     computed: getter => ({ get value() { return getter() } }),
@@ -43,13 +47,21 @@ function loadPage(options = {}) {
       calls.execute += 1
       return options.execute ? options.execute(action, dependencies) : { name: action.name, quantity: action.quantity }
     },
+    previewOrder: async items => { calls.preview += 1; return options.preview ? options.preview(items) : {
+      orderPendingAction: { type: 'create_order', items: [], totalQuantity: 0, totalPrice: 0, requiresConfirmation: true },
+      cartSnapshot: []
+    } },
+    isSameCartSnapshot: (items, snapshot) => options.sameSnapshot ? options.sameSnapshot(items, snapshot) : true,
     getDishes: async () => { calls.menu += 1; return options.dishes || [] },
     useCartStore: () => cartStore,
     uni: { switchTab: target => calls.navigation.push(target) }
   }
   const script = pageText.match(/<script setup>([\s\S]*?)<\/script>/)[1].replace(/^import .*$/gm, '')
-  vm.runInNewContext(script + `\nthis.state={query,loading,result,errorMessage,pendingAction,confirming,
-    actionStatus,actionStatusType,queryLength,submitQuery,confirmAction,cancelAction,fillExample,goToCart}`, context)
+  vm.runInNewContext(script + `\nthis.state={query,loading,result,errorMessage,cartPendingAction,confirming,
+    actionStatus,actionStatusType,orderPreviewLoading,orderPendingAction,orderCartSnapshot,
+    orderProposalConfirmed,orderStatus,orderStatusType,cartItems,cartItemCount,queryLength,
+    submitQuery,confirmAction,cancelAction,fillExample,goToCart,generateOrderPreview,
+    confirmOrderProposal,cancelOrderProposal}`, context)
   return { ...context.state, calls, cartStore }
 }
 
@@ -176,7 +188,7 @@ test('菜单加载失败不修改购物车且不泄露原始错误', async () =>
 test('普通Answer展示且无Pending Action时不出现可执行状态', async () => {
   const page = loadPage({ run: async () => validResponse({ answer: '你好，有什么可以帮你？' }) })
   page.query.value = '你好'; await page.submitQuery()
-  assert.equal(page.result.value.answer, '你好，有什么可以帮你？'); assert.equal(page.pendingAction.value, null)
+  assert.equal(page.result.value.answer, '你好，有什么可以帮你？'); assert.equal(page.cartPendingAction.value, null)
   assert.equal(page.calls.execute, 0); assert.equal(page.calls.add, 0)
 })
 
@@ -184,13 +196,13 @@ test('合法Pending Action进入确认卡状态，确认前不修改购物车', 
   const action = validAction()
   const page = loadPage({ run: async () => validResponse({ pendingAction: action }) })
   page.query.value = '加两杯'; await page.submitQuery()
-  assert.deepEqual(clone(page.pendingAction.value), action); assert.equal(page.calls.execute, 0); assert.equal(page.calls.add, 0)
+  assert.deepEqual(clone(page.cartPendingAction.value), action); assert.equal(page.calls.execute, 0); assert.equal(page.calls.add, 0)
 })
 
 test('双击确认只执行一次', async () => {
   let resolve
   const page = loadPage({ execute: () => new Promise(done => { resolve = done }) })
-  page.pendingAction.value = validAction()
+  page.cartPendingAction.value = validAction()
   const first = page.confirmAction(); const second = page.confirmAction()
   assert.equal(page.confirming.value, true); assert.equal(page.calls.execute, 1)
   resolve({ name: '柠檬茶', quantity: 2 }); await Promise.all([first, second])
@@ -198,39 +210,39 @@ test('双击确认只执行一次', async () => {
 })
 
 test('成功后清除提案、显示已加入且不能再次执行', async () => {
-  const page = loadPage(); page.pendingAction.value = validAction()
+  const page = loadPage(); page.cartPendingAction.value = validAction()
   await page.confirmAction(); await page.confirmAction()
-  assert.equal(page.pendingAction.value, null); assert.equal(page.calls.execute, 1)
+  assert.equal(page.cartPendingAction.value, null); assert.equal(page.calls.execute, 1)
   assert.equal(page.actionStatus.value, '已加入购物车：柠檬茶 × 2'); assert.equal(page.actionStatusType.value, 'success')
 })
 
 test('取消只清除提案，不调用Agent或购物车', () => {
-  const page = loadPage(); page.pendingAction.value = validAction(); page.cancelAction()
-  assert.equal(page.pendingAction.value, null); assert.equal(page.actionStatus.value, '已取消。')
+  const page = loadPage(); page.cartPendingAction.value = validAction(); page.cancelAction()
+  assert.equal(page.cartPendingAction.value, null); assert.equal(page.actionStatus.value, '已取消。')
   assert.equal(page.calls.run, 0); assert.equal(page.calls.execute, 0); assert.equal(page.calls.add, 0)
 })
 
 test('新Query立即清理旧结果、旧提案和动作状态', async () => {
   let resolve
   const page = loadPage({ run: () => new Promise(done => { resolve = done }) })
-  page.result.value = validResponse(); page.pendingAction.value = validAction(); page.actionStatus.value = '旧状态'; page.query.value = '新请求'
+  page.result.value = validResponse(); page.cartPendingAction.value = validAction(); page.actionStatus.value = '旧状态'; page.query.value = '新请求'
   const request = page.submitQuery()
-  assert.equal(page.result.value, null); assert.equal(page.pendingAction.value, null); assert.equal(page.actionStatus.value, '')
+  assert.equal(page.result.value, null); assert.equal(page.cartPendingAction.value, null); assert.equal(page.actionStatus.value, '')
   resolve(validResponse({ answer: '新回答' })); await request; assert.equal(page.result.value.answer, '新回答')
 })
 
 test('确认失败按安全标记让旧提案失效', async () => {
   const error = new Error('菜品价格已变化，请重新确认最新价格。'); error.invalidateAction = true
-  const page = loadPage({ execute: async () => { throw error } }); page.pendingAction.value = validAction()
+  const page = loadPage({ execute: async () => { throw error } }); page.cartPendingAction.value = validAction()
   await page.confirmAction()
-  assert.equal(page.pendingAction.value, null); assert.equal(page.actionStatusType.value, 'error')
+  assert.equal(page.cartPendingAction.value, null); assert.equal(page.actionStatusType.value, 'error')
 })
 
 test('页面只展示用户字段，不展示内部协议与诊断数据', () => {
   const template = pageText.split('<script setup>')[0]
-  for (const expected of ['{{ result.answer }}', '{{ pendingAction.name }}', '{{ pendingAction.quantity }}',
-    '{{ pendingAction.unitPrice.toFixed(2) }}', '{{ pendingAction.totalPrice.toFixed(2) }}']) assert.ok(template.includes(expected), expected)
-  for (const hidden of ['dishId', 'on_sale', 'sold_out', 'toolName', 'tool_call_id', 'trace', 'messages', 'JSON']) {
+  for (const expected of ['{{ result.answer }}', '{{ cartPendingAction.name }}', '{{ cartPendingAction.quantity }}',
+    '{{ cartPendingAction.unitPrice.toFixed(2) }}', '{{ cartPendingAction.totalPrice.toFixed(2) }}']) assert.ok(template.includes(expected), expected)
+  for (const hidden of ['on_sale', 'sold_out', 'toolName', 'tool_call_id', 'trace', 'messages', 'JSON']) {
     assert.ok(!template.includes(hidden), hidden)
   }
   assert.ok(!pageText.includes('console.')); assert.ok(!serviceText.includes('runForAdmin')); assert.ok(!serviceText.includes('traceOnly'))
