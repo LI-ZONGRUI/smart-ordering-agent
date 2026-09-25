@@ -17,6 +17,17 @@ function summarizeToolResult(toolName, result) {
   } else if (toolName === 'get_dish_detail') {
     if (typeof result?.found === 'boolean') summary.found = result.found
     if (result?.item) summary.item = pickItem(result.item)
+  } else if (toolName === 'prepare_add_to_cart' && result?.pendingAction) {
+    const action = result.pendingAction
+    summary.pendingAction = {
+      type: action.type,
+      dishId: action.dishId,
+      name: action.name,
+      quantity: action.quantity,
+      unitPrice: action.unitPrice,
+      totalPrice: action.totalPrice,
+      requiresConfirmation: action.requiresConfirmation
+    }
   }
   return summary
 }

@@ -30,19 +30,39 @@ function setup(options = {}) {
   } }
   return { calls, dishes, run:(name,args)=>executeTool(name,args,{db}) }
 }
-test('Registry恰好3个唯一工具，function JSON Schema明确且JSON可序列化',()=>{
+function loadExecutorWithCartAction(prepareAddToCart) {
+  const sandbox = { module: { exports: {} }, require(name) {
+    if (name === './registry') return { getToolDefinitions: () => [{ function: { name: 'prepare_add_to_cart', parameters: {
+      type: 'object', additionalProperties: false, required: ['dishId', 'quantity'],
+      properties: { dishId: { type: 'string', minLength: 1, maxLength: 64 }, quantity: { type: 'integer', minimum: 1, maximum: 20 } }
+    } } }] }
+    if (name === './menu-tools') return { searchMenu() {}, listAvailableDrinks() {}, getDishDetail() {} }
+    if (name === './cart-actions') return { prepareAddToCart }
+    throw new Error('unexpected require: ' + name)
+  } }
+  vm.runInNewContext(fs.readFileSync('uniCloud-aliyun/cloudfunctions/agent/tools/executor.js', 'utf8'), sandbox)
+  return sandbox.module.exports.executeTool
+}
+test('Registry恰好4个唯一工具，function JSON Schema明确且JSON可序列化',()=>{
   const tools=getToolDefinitions()
-  assert.deepEqual(tools.map(t=>t.function.name),['search_menu','list_available_drinks','get_dish_detail'])
-  assert.equal(new Set(tools.map(t=>t.function.name)).size,3)
+  assert.deepEqual(tools.map(t=>t.function.name),['search_menu','list_available_drinks','get_dish_detail','prepare_add_to_cart'])
+  assert.equal(new Set(tools.map(t=>t.function.name)).size,4)
   for(const tool of tools){
     assert.equal(tool.type,'function');assert.ok(tool.function.description)
     const p=tool.function.parameters;assert.equal(p.type,'object');assert.equal(p.additionalProperties,false)
-    assert.ok(Array.isArray(p.required));for(const key of p.required)assert.equal(p.properties[key].type,'string')
+    assert.ok(Array.isArray(p.required));for(const key of p.required)assert.ok(['string','integer'].includes(p.properties[key].type))
   }
   assert.deepEqual(JSON.parse(JSON.stringify(tools)),tools)
   tools[0].function.name='create_order';tools[0].function.parameters.properties.query.maxLength=999
   assert.equal(getToolDefinitions()[0].function.name,'search_menu')
   assert.equal(getToolDefinitions()[0].function.parameters.properties.query.maxLength,50)
+})
+test('prepare_add_to_cart Schema只接受dishId和1～20整数quantity',()=>{
+  const schema=getToolDefinitions().find(tool=>tool.function.name==='prepare_add_to_cart').function.parameters
+  assert.deepEqual(schema.required,['dishId','quantity'])
+  assert.deepEqual(Object.keys(schema.properties),['dishId','quantity'])
+  assert.equal(schema.properties.dishId.type,'string')
+  assert.deepEqual(schema.properties.quantity,{type:'integer',minimum:1,maximum:20,description:'准备加入的数量，必须为1～20的整数'})
 })
 for(const name of ['unknown','constructor','__proto__','toString','../orders','create_order','add_to_cart',null]) {
   test('拒绝未知/危险工具 '+name,async()=>{const a=setup();assert.equal((await a.run(name,{})).errCode,'AGENT_TOOL_NOT_FOUND');assert.equal(a.calls.length,0)})
@@ -115,6 +135,58 @@ test('详情不存在返回明确found=false',async()=>{
 for(const args of [{dishId:''},{dishId:1},{dishId:' '},{}]) {
   test('详情参数错误 '+JSON.stringify(args),async()=>assert.equal((await setup().run('get_dish_detail',args)).errCode,'AGENT_TOOL_ARGUMENT_INVALID'))
 }
+for(const args of [{quantity:1},{dishId:'dish-4'},{dishId:'dish-4',quantity:0},{dishId:'dish-4',quantity:-1},
+  {dishId:'dish-4',quantity:1.5},{dishId:'dish-4',quantity:21},{dishId:'dish-4',quantity:'2'},
+  {dishId:'dish-4',quantity:2,name:'假的柠檬茶'},{dishId:'dish-4',quantity:2,price:0},{dishId:' ',quantity:2}]) {
+  test('购物车提案拒绝非法参数 '+JSON.stringify(args),async()=>{
+    const a=setup();assert.equal((await a.run('prepare_add_to_cart',args)).errCode,'AGENT_TOOL_ARGUMENT_INVALID');assert.equal(a.calls.length,0)
+  })
+}
+test('在售菜品重新查询DB并生成服务端Pending Action',async()=>{
+  const a=setup(),dish=a.dishes.find(item=>item._id==='dish-4')
+  dish.name='实时柠檬茶';dish.price=12.34;dish.status='on_sale'
+  const result=await a.run('prepare_add_to_cart',{dishId:' dish-4 ',quantity:3})
+  assert.deepEqual(result,{errCode:0,tool:'prepare_add_to_cart',pendingAction:{type:'add_to_cart',dishId:'dish-4',
+    name:'实时柠檬茶',quantity:3,unitPrice:12.34,totalPrice:37.02,requiresConfirmation:true}})
+  assert.deepEqual(a.calls.map(call=>call.condition),[{_id:'dish-4'}])
+})
+test('模型不能通过参数提供name/price/status/totalPrice',async()=>{
+  const result=await setup().run('prepare_add_to_cart',{dishId:'dish-4',quantity:2,name:'伪造',price:1,status:'on_sale',totalPrice:2})
+  assert.equal(result.errCode,'AGENT_TOOL_ARGUMENT_INVALID')
+})
+test('sold_out菜品不生成Pending Action',async()=>{
+  const result=await setup().run('prepare_add_to_cart',{dishId:'dish-8',quantity:1})
+  assert.deepEqual(result,{errCode:'AGENT_ACTION_DISH_UNAVAILABLE',errMsg:'当前菜品不可用'})
+  assert.equal(Object.hasOwn(result,'pendingAction'),false)
+})
+test('不存在菜品不生成Pending Action',async()=>{
+  const result=await setup().run('prepare_add_to_cart',{dishId:'missing',quantity:1})
+  assert.deepEqual(result,{errCode:'AGENT_ACTION_DISH_NOT_FOUND',errMsg:'未找到对应菜品'})
+  assert.equal(Object.hasOwn(result,'pendingAction'),false)
+})
+test('Executor只透传白名单业务错误并使用固定安全文案',async()=>{
+  for (const errCode of ['AGENT_ACTION_DISH_NOT_FOUND','AGENT_ACTION_DISH_UNAVAILABLE']) {
+    const run=loadExecutorWithCartAction(async()=>({errCode,errMsg:'database internals',stack:'secret stack'}))
+    const args=Object.assign(Object.create(null),{dishId:'dish-4',quantity:1})
+    const result=await run('prepare_add_to_cart',args,{db:{}})
+    assert.equal(result.errCode,errCode)
+    assert.equal(Object.hasOwn(result,'stack'),false)
+    assert.ok(!JSON.stringify(result).includes('database internals'))
+  }
+})
+test('Executor未知返回错误码和未知异常仍统一泛化',async()=>{
+  for (const implementation of [
+    async()=>({errCode:'CUSTOM_DATABASE_ERROR',errMsg:'database internals',stack:'secret stack'}),
+    async()=>{const error=new Error('database internals');error.code='CUSTOM_DATABASE_ERROR';throw error}
+  ]) {
+    const run=loadExecutorWithCartAction(implementation)
+    const args=Object.assign(Object.create(null),{dishId:'dish-4',quantity:1})
+    const result=await run('prepare_add_to_cart',args,{db:{}})
+    assert.deepEqual({...result},{errCode:'AGENT_TOOL_EXECUTION_FAILED',errMsg:'工具执行失败，请检查菜单数据或稍后重试'})
+    assert.ok(!JSON.stringify(result).includes('database internals'))
+    assert.equal(Object.hasOwn(result,'stack'),false)
+  }
+})
 for(const options of [{fails:true},{badResponse:true},{dishes:[{...source[0],price:NaN}]}]) {
   test('DB异常安全返回且不泄露内部错误',async()=>{
     const r=await setup(options).run('search_menu',{query:'鸡'})
@@ -152,8 +224,26 @@ test('admin只允许server并仅转发toolName和args',async()=>{
   await sandbox.exports.main({toolName:'search_menu',args:{query:'可乐'},db:'fake'},{SOURCE:'server'})
   assert.deepEqual(calls,[['search_menu',{query:'可乐'}]])
 })
-test('V5.1工具层仍不含模型API、写操作、动态用户路径执行',()=>{
-  const files=['tools/registry.js','tools/executor.js','tools/menu-tools.js']
+test('admin仅恢复云对象代理抛出的白名单业务错误',async()=>{
+  for (const [errCode,errMsg] of [['AGENT_ACTION_DISH_UNAVAILABLE','当前菜品不可用'],['AGENT_ACTION_DISH_NOT_FOUND','未找到对应菜品']]) {
+    const sandbox={exports:{},uniCloud:{importObject:()=>({testTool:async()=>{throw {errCode,errMsg:'database internals',stack:'secret stack'}}})}}
+    vm.runInNewContext(fs.readFileSync('uniCloud-aliyun/cloudfunctions/agent-tool-admin/index.js','utf8'),sandbox)
+    const result=await sandbox.exports.main({toolName:'prepare_add_to_cart',args:{dishId:'dish-8',quantity:1}},{SOURCE:'server'})
+    assert.deepEqual({...result},{errCode,errMsg})
+    assert.ok(!JSON.stringify(result).includes('database internals'))
+    assert.equal(Object.hasOwn(result,'stack'),false)
+  }
+})
+test('admin未知自定义异常继续返回通用安全错误',async()=>{
+  const sandbox={exports:{},uniCloud:{importObject:()=>({testTool:async()=>{throw {code:'CUSTOM_DATABASE_ERROR',message:'database internals',stack:'secret stack'}}})}}
+  vm.runInNewContext(fs.readFileSync('uniCloud-aliyun/cloudfunctions/agent-tool-admin/index.js','utf8'),sandbox)
+  const result=await sandbox.exports.main({toolName:'prepare_add_to_cart',args:{dishId:'dish-8',quantity:1}},{SOURCE:'server'})
+  assert.deepEqual({...result},{errCode:'AGENT_TOOL_EXECUTION_FAILED',errMsg:'工具调用未完成，请检查部署与菜单数据'})
+  assert.ok(!JSON.stringify(result).includes('database internals'))
+  assert.equal(Object.hasOwn(result,'stack'),false)
+})
+test('Agent工具层仍不含模型API、写操作、动态用户路径执行',()=>{
+  const files=['tools/registry.js','tools/executor.js','tools/menu-tools.js','tools/cart-actions.js']
   const text=files.map(f=>fs.readFileSync('uniCloud-aliyun/cloudfunctions/agent/'+f,'utf8')).join('\n')
   for(const pattern of [/httpclient/,/DASHSCOPE_API_KEY/,/chat\/completions/,/\.add\(/,/\.update\(/,/\.remove\(/,/eval\(/,/new Function/,/require\(toolName/])assert.ok(!pattern.test(text.replace('seen.add(row._id)', '')),String(pattern))
 })

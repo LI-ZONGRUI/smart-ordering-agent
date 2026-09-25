@@ -26,7 +26,8 @@ WeChat Mini Program
                             → 服务端验证与证据原文渲染
           └─ agent  → Model Studio / qwen3.8-flash Function Calling
                        → Tool Registry → Executor allowlist
-                       → Read-only Menu Tools → dishes
+                       → Read-only Menu Tools / Action Preparation Tool
+                       → dishes → Server Validated Pending Action
 ```
 
 Pinia是页面状态层，不是所有网络请求的必经网关。推荐与问答页直接通过services访问云对象；购物车不入库，订单store只缓存云端查询结果。
@@ -58,7 +59,7 @@ Pinia是页面状态层，不是所有网络请求的必经网关。推荐与问
 | --- | --- | --- |
 | ai.recommend(message) | 预算、口味、食材偏好；当前在售dishes | 模型选择菜品；服务器校验真实ID、状态、价格并计算totalPrice；用户手动加购 |
 | rag.answer(query) | 单个菜单知识问题；Top-3审核知识及关联实时dishes | 模型选择evidence IDs与answerable；服务器验证后只渲染证据原文；不操作购物车 |
-| agent.run(query) | 单个自然语言目标；三个只读实时菜单Tool | 模型通过原生Function Calling选择工具并观察结果；Executor校验和执行；不提供Cart/Order写操作 |
+| agent.run(query) | 单个自然语言目标；只读菜单Tool与购物车Action Preparation Tool | 模型通过原生Function Calling选择工具并观察结果；服务器可返回待确认动作，但不提供Cart/Order写操作 |
 
 价格、售卖状态必须来自实时数据库，不从模型记忆获取。推荐、RAG与Agent分别维护职责；当前Agent没有把RAG注册为Tool，也不会代理推荐接口。
 
@@ -86,15 +87,17 @@ HBuilderX Admin Query（当前验收入口）
  → Qwen Native Function Calling
  → Tool Registry（唯一Schema来源）
  → Executor（allowlist与参数校验）
- → Read-only Menu Tools
+ → Read-only Menu Tools / prepare_add_to_cart
  → categories / dishes
+ → Server Validated Pending Action（如适用）
  → role=tool结果回传Qwen
- → 下一步Tool或最终回答
+ → 请求用户确认
+ → STOP（当前不执行Pinia Mutation）
 ```
 
 正式 `agent.run(query)` 与管理验收入口复用同一个有限Runner。模型返回的 `assistant.tool_calls` 被保留，服务器按匹配的 `tool_call_id` 追加 `role=tool` 结果，再进入下一轮决策。单次任务最多5轮模型决策、8次Tool调用；正式接口不返回Trace，`traceOnly` 只存在于HBuilderX管理入口的返回压缩层。
 
-三个只读Tool是 `search_menu`、`list_available_drinks` 和 `get_dish_detail`。真实验收中，“有可乐吗？没有的话推荐点别的喝的。”先查询可乐，在观察空结果后由模型再次决定查询在售饮料。第二步不是服务器固定fallback。当前没有Agent前端、跨请求会话记忆、Cart/Order Tool、写操作或用户确认协议。详见 [Agent Loop](agent/AGENT_LOOP.md)。
+三个Read Tool是 `search_menu`、`list_available_drinks` 和 `get_dish_detail`。V5.3增加 `prepare_add_to_cart` Action Preparation Tool：它重新查询dishes、按服务端价格计算金额，只生成 `requiresConfirmation:true` 的Pending Action，不修改Pinia或数据库。当前没有Agent前端、跨请求会话记忆、Cart/Order Write Tool或确认执行协议。详见 [Agent Loop](agent/AGENT_LOOP.md) 与 [Action Proposal](agent/ACTIONS.md)。
 
 ## 7. 输出和运行边界
 
@@ -110,4 +113,5 @@ HBuilderX Admin Query（当前验收入口）
 - [云对象与管理入口](../uniCloud-aliyun/cloudfunctions) / [数据库定义](../uniCloud-aliyun/database)
 - [V4总结](rag/V4_SUMMARY.md) / [Answer API](rag/ANSWER_API.md) / [端到端评测](rag/ANSWER_EVALUATION.md)
 - [V5.1 Tool Foundation](agent/TOOLS.md) / [V5.2 Agent Loop](agent/AGENT_LOOP.md)
+- [V5.3 Action Proposal](agent/ACTIONS.md)
 - [部署步骤](UNICLOUD_SETUP.md) / [README运行说明](../README.md)

@@ -1,4 +1,4 @@
-// V5.1 在这里建立唯一机器可读合同；V5.2 只读取该合同发送给模型，工具执行仍由 Executor 控制。
+// Registry是唯一机器可读合同；模型只能看到这里声明、且Executor静态映射的工具。
 const definitions = [
   {
     type: 'function',
@@ -29,6 +29,22 @@ const definitions = [
         type: 'object', properties: { dishId: { type: 'string', minLength: 1,
           description: '非空的真实菜品ID，去除首尾空白' } },
         required: ['dishId'], additionalProperties: false
+      }
+    }
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'prepare_add_to_cart',
+      description: '根据真实dishId和数量准备一个需要用户确认的购物车动作；会重新查询菜品状态与价格，不会修改购物车。应先用菜单查询工具确认具体菜品，不得把待确认动作说成已经执行。',
+      parameters: {
+        type: 'object',
+        properties: {
+          dishId: { type: 'string', minLength: 1, description: '非空的真实菜品ID，去除首尾空白' },
+          quantity: { type: 'integer', minimum: 1, maximum: 20, description: '准备加入的数量，必须为1～20的整数' }
+        },
+        required: ['dishId', 'quantity'],
+        additionalProperties: false
       }
     }
   }

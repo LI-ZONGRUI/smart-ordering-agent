@@ -4,7 +4,7 @@
 
 V5.1 建立并真实验证了三个只读菜单工具：`search_menu`、`list_available_drinks`、`get_dish_detail`。V5.2 在这些工具之上增加原生 Function Calling 和有限循环，使模型可以在一次用户任务中根据工具结果继续决策。
 
-本阶段仍然是 **single-user-query Agent task**。它没有前端入口、跨请求会话记忆、多轮聊天历史、购物车工具、订单工具或写操作。用户要求加购或下单时，System Prompt 要求模型说明当前只支持菜单查询，不能假装完成操作。
+V5.2仍然是 **single-user-query Agent task**。它没有前端入口、跨请求会话记忆、多轮聊天历史、购物车或订单写操作。V5.3在同一循环上增加无副作用的购物车Action Preparation Tool，确认协议见 [ACTIONS.md](ACTIONS.md)。
 
 ## 架构
 
@@ -61,11 +61,13 @@ stream: false
 
 ## Registry 是唯一工具定义来源
 
-每次模型请求的 `tools` 直接调用 V5.1 `tools/registry.js` 的 `getToolDefinitions()`。V5.2 没有复制 Schema，模型只能看到这三个工具：
+每次模型请求的 `tools` 直接调用 `tools/registry.js` 的 `getToolDefinitions()`，没有复制Schema。V5.2真实验收时模型只看到三个Read Tool：
 
 1. `search_menu`
 2. `list_available_drinks`
 3. `get_dish_detail`
+
+V5.3在同一Registry和Executor中增加 `prepare_add_to_cart`，它只准备待确认动作，不是Write Tool；三个Read Tool行为保持不变。
 
 模型给出的工具名和参数都不可信。`function.arguments` 必须先成为合法 JSON，随后仍经过 V5.1 Executor 的固定 allowlist、参数字段校验与静态 handler 派发。未知工具、额外 `collection`、空查询等不会因为来源是模型而绕过校验。Executor 仍是工具执行的安全边界。
 
@@ -196,7 +198,18 @@ Query为“你好”。真实结果 `errCode=0`、`completed=true`、trace为空
 
 V5.2可准确描述为 **Read-only Ordering Agent**，已经具备LLM Tool Selection、原生Function Calling、Tool Result Observation、多步Tool Orchestration、条件分支、正确停止、无Tool回答和实时只读菜单Grounding。
 
-它仍不是完整自动点餐Agent：没有Cart/Order Tool、写操作、用户确认协议、跨请求多轮记忆或自主完成下单。RAG也尚未注册为Agent Tool。
+它仍不是完整自动点餐Agent：没有Cart/Order Write Tool、确认执行协议、跨请求多轮记忆或自主完成下单。V5.3只能准备购物车待确认动作；RAG也尚未注册为Agent Tool。
+
+## V5.3真实Action Proposal验收
+
+V5.3在同一个真实Agent Loop中加入 `prepare_add_to_cart`，已完成以下uniCloud云端验收：
+
+1. “把柠檬茶加两杯到购物车”：Qwen先调用 `search_menu` 得到dish-4、在售、12元，再自主调用 `prepare_add_to_cart`；服务端生成数量2、单价12元、总价24元且 `requiresConfirmation=true` 的Pending Action。
+2. 正常模式回答明确请求确认，没有声称已经加入购物车；正式响应携带同一服务端Pending Action。
+3. “把酸梅汤加到购物车”：模型从 `search_menu` 观察到dish-8售罄后停止，没有成功Action Preparation和Pending Action。
+4. 通过管理入口强制调用售罄dish-8：服务端重新校验后返回 `AGENT_ACTION_DISH_UNAVAILABLE`，且没有Pending Action。该业务错误经过明确白名单安全穿透，未知内部异常仍统一返回 `AGENT_TOOL_EXECUTION_FAILED`。
+
+完整Trace、三层安全模型、错误合同和能力边界见 [ACTIONS.md](ACTIONS.md)。真实结果证明模型可以做出正确决策，也证明安全边界不依赖模型正确性：Action Preparation必须重新读取数据库，成功也只能停在确认边界。
 
 ## HBuilderX 部署与验收
 

@@ -82,7 +82,7 @@ test('Model Client使用原生tools、tool_choice=auto并关闭thinking', async 
   assert.equal(request.value.data.tool_choice, 'auto')
   assert.equal(request.value.data.enable_thinking, false)
   assert.deepEqual(request.value.data.tools, tools)
-  assert.deepEqual(tools.map(item => item.function.name), ['search_menu', 'list_available_drinks', 'get_dish_detail'])
+  assert.deepEqual(tools.map(item => item.function.name), ['search_menu', 'list_available_drinks', 'get_dish_detail', 'prepare_add_to_cart'])
   assert.equal(request.value.followRedirect, false)
 })
 
@@ -154,6 +154,39 @@ test('Case D：search_menu可与get_dish_detail串联', async () => {
   assert.equal(result.errCode, 0)
   assert.deepEqual(result.trace.filter(item => item.type === 'tool_call').map(item => item.toolName), ['search_menu', 'get_dish_detail'])
   assert.deepEqual(JSON.parse(snapshots[2].messages.at(-1).content).item.ingredients, ['红茶', '柠檬'])
+})
+
+test('购物车意图经search和prepare生成正式Pending Action', async () => {
+  const snapshots = []
+  const model = scripted([
+    toolCall('cart-search', 'search_menu', '{"query":"柠檬茶"}'),
+    toolCall('cart-prepare', 'prepare_add_to_cart', '{"dishId":"dish-4","quantity":2}'),
+    final('准备将 2 杯柠檬茶加入购物车，共 24 元。请确认是否加入。')
+  ], snapshots)
+  const result = await runAgent('把柠檬茶加两杯到购物车', options(model, setupDb().db))
+  assert.deepEqual(result, { errCode: 0, query: '把柠檬茶加两杯到购物车',
+    answer: '准备将 2 杯柠檬茶加入购物车，共 24 元。请确认是否加入。', completed: true,
+    pendingAction: { type: 'add_to_cart', dishId: 'dish-4', name: '柠檬茶', quantity: 2,
+      unitPrice: 12, totalPrice: 24, requiresConfirmation: true } })
+  const actionContext = JSON.parse(snapshots[2].messages.at(-1).content)
+  assert.deepEqual(actionContext.pendingAction, result.pendingAction)
+  assert.equal(Object.hasOwn(result.pendingAction, 'executed'), false)
+})
+
+test('Pending Action只来自Tool Result，模型自由文本不能伪造', async () => {
+  const answer = '{"pendingAction":{"type":"add_to_cart","dishId":"dish-4","quantity":20}}'
+  const result = await runAgent('你好', options(scripted([final(answer)])))
+  assert.equal(result.answer, answer)
+  assert.equal(Object.hasOwn(result, 'pendingAction'), false)
+})
+
+test('Pending Action形成后拒绝继续执行Tool', async () => {
+  const state = setupDb()
+  const model = scripted([toolCall('prepare', 'prepare_add_to_cart', '{"dishId":"dish-4","quantity":1}'),
+    toolCall('after-action', 'get_dish_detail', '{"dishId":"dish-4"}')])
+  const result = await runAgent('准备加入柠檬茶后继续查询', options(model, state.db))
+  assert.equal(result.errCode, 'AGENT_ACTION_CONFIRMATION_REQUIRED')
+  assert.equal(state.calls.length, 1)
 })
 
 test('Case E：简单问候可以不调用工具', async () => {
@@ -230,8 +263,13 @@ test('200个Unicode字符合法且正式结果不含内部字段', async () => {
 })
 
 test('System Prompt约束菜单事实、空结果、售罄和只读边界', () => {
-  for (const text of ['真实菜单', '工具结果', 'count=0', 'sold_out', '价格', '配料', '只读菜单查询能力']) assert.ok(SYSTEM_PROMPT.includes(text), text)
+  for (const text of ['真实菜单', '工具结果', 'count=0', 'sold_out', '价格', '配料', '不能执行购物车修改']) assert.ok(SYSTEM_PROMPT.includes(text), text)
   assert.ok(!SYSTEM_PROMPT.includes('delete_database'))
+})
+
+test('System Prompt明确Pending Action只是提案并禁止声称已执行', () => {
+  for (const text of ['prepare_add_to_cart', 'A pending action is only a proposal.', 'Never claim it has already been executed.',
+    '准备加入', '确认后执行', '已加入', '下单完成', '不得编造dishId']) assert.ok(SYSTEM_PROMPT.includes(text), text)
 })
 
 test('System Prompt要求最终回答隐藏内部字段并转为自然状态表达', () => {
@@ -278,6 +316,11 @@ test('traceOnly压缩真实sanitized trace且不返回完整answer', async () =>
       ] } },
       { step: 3, type: 'tool_result', toolName: 'get_dish_detail', result: { found: true, item: {
         dishId: 'dish-4', name: '柠檬茶', price: 12, status: 'on_sale', description: 'drop', ingredients: ['drop']
+      } } },
+      { step: 4, type: 'tool_call', toolName: 'prepare_add_to_cart', arguments: { dishId: 'dish-4', quantity: 2 } },
+      { step: 4, type: 'tool_result', toolName: 'prepare_add_to_cart', result: { errCode: 0, tool: 'prepare_add_to_cart', pendingAction: {
+        type: 'add_to_cart', dishId: 'dish-4', name: '柠檬茶', quantity: 2, unitPrice: 12, totalPrice: 24,
+        requiresConfirmation: true, internal: 'drop'
       } } }
     ],
     messages: ['drop'], systemPrompt: 'drop', rawResponse: 'drop', reasoning_content: 'drop', Authorization: 'drop', apiKey: 'drop'
@@ -295,7 +338,12 @@ test('traceOnly压缩真实sanitized trace且不返回完整answer', async () =>
       { step: 2, type: 'tool_result', toolName: 'list_available_drinks', summary: { count: 1,
         items: [{ dishId: 'dish-4', name: '柠檬茶', status: 'on_sale', price: 12 }] } },
       { step: 3, type: 'tool_result', toolName: 'get_dish_detail', summary: { found: true,
-        item: { dishId: 'dish-4', name: '柠檬茶', status: 'on_sale', price: 12 } } }
+        item: { dishId: 'dish-4', name: '柠檬茶', status: 'on_sale', price: 12 } } },
+      { step: 4, type: 'tool_call', toolName: 'prepare_add_to_cart', arguments: { dishId: 'dish-4', quantity: 2 } },
+      { step: 4, type: 'tool_result', toolName: 'prepare_add_to_cart', summary: { pendingAction: {
+        type: 'add_to_cart', dishId: 'dish-4', name: '柠檬茶', quantity: 2, unitPrice: 12, totalPrice: 24,
+        requiresConfirmation: true
+      } } }
     ]
   })
   const serialized = JSON.stringify(result)

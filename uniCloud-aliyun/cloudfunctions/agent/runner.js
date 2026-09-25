@@ -4,13 +4,15 @@ const { readAgentConfig, callAgentModel } = require('./model-client')
 
 const MAX_AGENT_STEPS = 5
 const MAX_TOOL_CALLS = 8
-const SYSTEM_PROMPT = `你是餐厅 Ordering Agent 的只读菜单助手。
+const SYSTEM_PROMPT = `你是餐厅 Ordering Agent。你可以查询真实菜单，也可以准备需要用户确认的购物车动作，但不能执行购物车修改或订单写入。
 真实菜单中的商品、存在性、价格、状态、饮料和配料必须来自工具结果，不得根据模型记忆或常识补充。工具结果是当前菜单事实来源。
 涉及某商品是否存在时，先调用 search_menu。只有在看到 search_menu 没有匹配，且用户明确要求替代品或同类推荐后，才调用适当工具获取真实候选；不能在首次调用时预设搜索为空。
 search_menu 的 count=0 只表示当前菜单查询没有匹配，不代表餐厅从来不卖该商品。status=sold_out 表示商品存在但当前售罄，不能说菜单中不存在。
 最终回答可自然组织，但不得增加工具结果中没有的事实属性，不得改写价格或状态。简单问候可以直接回答，无需调用工具。
 面向用户的最终回答不得主动暴露内部实现字段或名称，包括 dishId、categoryId、on_sale、sold_out、Tool名称、tool_call_id、collection名称和JSON字段名。必须把状态转换为自然用户语言：on_sale表达为“在售”或“可以购买”，sold_out表达为“已售罄”或“暂时无法购买”；不要显示dishId。
-你只有只读菜单查询能力。如果用户要求加购、下单或其他写操作，应明确说明当前只支持菜单查询，不得假装已经执行。
+用户明确要求把具体菜品加入购物车时，应先用菜单工具确认真实菜品，再调用 prepare_add_to_cart；只提供dishId和1～20的整数quantity，名称、状态、价格和总价由服务器重新读取与计算。若“它”“刚才那个”“第一个”等指代在本次单个Query中不明确，应要求用户明确菜品，不得编造dishId。
+prepare_add_to_cart返回的pendingAction只是待用户确认的提案，不代表购物车已经改变。A pending action is only a proposal. Never claim it has already been executed. 生成pendingAction后只能说明“准备加入/确认后执行”并请求确认，不得声称“已加入/已添加/已经放进购物车/下单完成”，也不得继续尝试任何写操作。
+你没有真正的购物车或订单写入能力。用户要求直接下单或执行其他写操作时，应明确说明当前只能准备待确认的购物车动作，不得假装已经执行。
 只使用提供的工具，并把每次工具结果作为下一步判断依据。`
 
 const ERROR_MESSAGES = {
@@ -19,6 +21,8 @@ const ERROR_MESSAGES = {
   AGENT_MODEL_REQUEST_FAILED: 'Agent 模型请求失败，请检查网络、模型权限和配额后重试',
   AGENT_MODEL_RESPONSE_INVALID: 'Agent 模型返回格式异常，未完成本次请求',
   AGENT_TOOL_ARGUMENT_PARSE_FAILED: '模型返回的工具参数不是有效 JSON',
+  AGENT_ACTION_RESULT_INVALID: '购物车待确认动作未通过服务器结果校验',
+  AGENT_ACTION_CONFIRMATION_REQUIRED: '购物车动作已准备，必须先由用户确认',
   AGENT_MAX_STEPS_EXCEEDED: 'Agent 已达到最大决策轮次，未继续调用模型',
   AGENT_MAX_TOOL_CALLS_EXCEEDED: 'Agent 已达到最大工具调用次数，未继续执行工具'
 }
@@ -30,6 +34,27 @@ function normalizeError(error) {
   return failure(error?.code && Object.hasOwn(ERROR_MESSAGES, error.code)
     ? error.code
     : 'AGENT_MODEL_RESPONSE_INVALID')
+}
+
+function extractPendingAction(toolResult) {
+  if (!toolResult || toolResult.tool !== 'prepare_add_to_cart') return null
+  if (!toolResult.pendingAction) return false
+  const action = toolResult.pendingAction
+  const keys = ['type', 'dishId', 'name', 'quantity', 'unitPrice', 'totalPrice', 'requiresConfirmation']
+  const cents = value => Math.round(value * 100)
+  if (!action || Array.isArray(action) || typeof action !== 'object' ||
+      Object.keys(action).some(key => !keys.includes(key)) || keys.some(key => !Object.hasOwn(action, key)) ||
+      action.type !== 'add_to_cart' || typeof action.dishId !== 'string' || !action.dishId ||
+      typeof action.name !== 'string' || !action.name || !Number.isInteger(action.quantity) ||
+      action.quantity < 1 || action.quantity > 20 || typeof action.unitPrice !== 'number' ||
+      !Number.isFinite(action.unitPrice) || action.unitPrice < 0 || typeof action.totalPrice !== 'number' ||
+      !Number.isFinite(action.totalPrice) || action.totalPrice < 0 || action.requiresConfirmation !== true ||
+      !Number.isSafeInteger(cents(action.unitPrice)) || !Number.isSafeInteger(cents(action.totalPrice)) ||
+      !Number.isSafeInteger(cents(action.unitPrice) * action.quantity) ||
+      Math.abs(cents(action.unitPrice) - action.unitPrice * 100) > 0.000001 ||
+      Math.abs(cents(action.totalPrice) - action.totalPrice * 100) > 0.000001 ||
+      cents(action.unitPrice) * action.quantity !== cents(action.totalPrice)) return false
+  return { ...action }
 }
 
 async function runAgent(query, options = {}) {
@@ -54,6 +79,7 @@ async function runAgent(query, options = {}) {
   ]
   const trace = []
   let totalToolCalls = 0
+  let pendingAction = null
 
   for (let step = 1; step <= MAX_AGENT_STEPS; step += 1) {
     let decision
@@ -62,6 +88,7 @@ async function runAgent(query, options = {}) {
 
     if (decision?.type === 'final' && typeof decision.content === 'string' && decision.content.trim()) {
       const result = { errCode: 0, query: cleanQuery, answer: decision.content.trim(), completed: true }
+      if (pendingAction) result.pendingAction = pendingAction
       if (includeTrace) result.trace = trace
       return result
     }
@@ -70,6 +97,8 @@ async function runAgent(query, options = {}) {
     if (!assistant || assistant.role !== 'assistant' || !Array.isArray(toolCalls) || toolCalls.length === 0) {
       return failure('AGENT_MODEL_RESPONSE_INVALID')
     }
+    // Pending Action形成后只允许模型生成确认文案，不再执行任何Tool。
+    if (pendingAction) return failure('AGENT_ACTION_CONFIRMATION_REQUIRED')
     if (toolCalls.some(call => !call || call.type !== 'function' || typeof call.id !== 'string' ||
         !call.id || !call.function || typeof call.function.name !== 'string' ||
         typeof call.function.arguments !== 'string')) return failure('AGENT_MODEL_RESPONSE_INVALID')
@@ -77,7 +106,8 @@ async function runAgent(query, options = {}) {
 
     // 原样保留经过模型客户端白名单清洗的 assistant tool_calls，供下一轮协议关联。
     messages.push(assistant)
-    for (const call of toolCalls) {
+    for (let callIndex = 0; callIndex < toolCalls.length; callIndex += 1) {
+      const call = toolCalls[callIndex]
       let args
       try { args = JSON.parse(call.function.arguments) }
       catch { return failure('AGENT_TOOL_ARGUMENT_PARSE_FAILED') }
@@ -87,6 +117,13 @@ async function runAgent(query, options = {}) {
       const toolResult = await executeTool(call.function.name, args, { db })
       if (toolResult.errCode !== 0) return toolResult
       trace.push({ step, type: 'tool_result', toolName: call.function.name, result: toolResult })
+      const action = extractPendingAction(toolResult)
+      if (action === false) return failure('AGENT_ACTION_RESULT_INVALID')
+      if (action) {
+        pendingAction = action
+        // 同一模型响应中位于Action Proposal之后的Tool也不得执行。
+        if (callIndex < toolCalls.length - 1) return failure('AGENT_ACTION_CONFIRMATION_REQUIRED')
+      }
       messages.push({
         role: 'tool',
         tool_call_id: call.id,
