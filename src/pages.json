@@ -3,6 +3,7 @@
     { "path": "pages/home/index", "style": { "navigationBarTitleText": "首页" } },
     { "path": "pages/ai-recommend/index", "style": { "navigationBarTitleText": "AI 智能点餐" } },
     { "path": "pages/rag-qa/index", "style": { "navigationBarTitleText": "菜单问答" } },
+    { "path": "pages/agent/index", "style": { "navigationBarTitleText": "智能点餐 Agent" } },
     { "path": "pages/menu/index", "style": { "navigationBarTitleText": "菜单" } },
     { "path": "pages/cart/index", "style": { "navigationBarTitleText": "购物车" } },
     { "path": "pages/orders/index", "style": { "navigationBarTitleText": "订单" } },

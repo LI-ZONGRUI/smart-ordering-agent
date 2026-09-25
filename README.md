@@ -2,7 +2,7 @@
 
 使用 **Vue 3 + uni-app + Composition API + Pinia + uniCloud + Qwen** 构建的微信点餐学习项目。围绕真实菜单完成点餐、云端订单持久化、自然语言菜品推荐、基于人工审核知识的单轮RAG问答，以及基于原生Function Calling的Ordering Agent。
 
-**单轮RAG已完成端到端评测与微信UI验收；Ordering Agent的只读菜单查询与经服务端校验的购物车动作提案均已完成真实uniCloud + qwen3.8-flash验收。** 动作仍需显式确认，当前不会修改购物车，也不是生产级客服或完整自动点餐Agent。
+**单轮RAG已完成端到端评测与微信UI验收；Ordering Agent的多步Function Calling、服务端动作提案、显式用户确认、实时菜单复核和Pinia购物车执行均已完成真实验收。** 只有明确点击确认且实时复核通过后才修改购物车。当前仍不是生产级客服或完整自主下单Agent。
 
 - [整体架构](docs/ARCHITECTURE.md)
 - [V4 RAG 总结、设计演进与失败案例](docs/rag/V4_SUMMARY.md)
@@ -20,7 +20,7 @@
 | 云端持久化 | categories / dishes / orders；提交订单时后端重新校验状态与价格，保存订单快照 |
 | AI 智能点餐 | Qwen3.8-Flash 理解预算、口味和食材偏好，返回1～3道真实菜品；后端校验ID、在售状态和价格 |
 | 菜单问答 | 独立页面调用 rag.answer(query)，支持1～200 Unicode字符的单轮问题，展示服务器回答、依据及实时相关菜品 |
-| Ordering Agent Foundation | Qwen原生Function Calling，自主调用真实菜单Tool；可生成经服务端校验、必须由用户确认的购物车动作提案，不会自动修改购物车 |
+| Ordering Agent | Qwen原生Function Calling，自主调用真实菜单Tool；生成服务端校验的购物车提案，并由用户在微信页面明确确认后复核实时菜单、修改Pinia购物车 |
 | 知识与索引 | 21条人工审核知识，512维 Embedding，批量幂等索引、唯一ID及内容哈希 |
 | 评测 | Retrieval、Robustness、12-query端到端 Answerability / Evidence / Grounding 评测 |
 
@@ -42,7 +42,8 @@
                     → 服务端验证、原文渲染
       └─ agent  → Qwen Function Calling → Registry / Executor
                     → Read-only Menu Tools / prepare_add_to_cart
-                    → dishes重查 → Pending Action → 等待确认
+                    → Pending Action → UI明确确认
+                    → 实时菜单复核 → Pinia购物车
 ```
 
 模型通过 Alibaba Cloud Model Studio 的 OpenAI-compatible API 调用，使用 `uniCloud.httpclient.request`。完整组件和数据边界见 [ARCHITECTURE.md](docs/ARCHITECTURE.md)。
@@ -62,7 +63,8 @@
 | End-to-End Evaluation | 12条固定问题，区分检索遗漏、证据选择遗漏和拒答错误 |
 | WeChat Menu QA UI | 单次输入、回答、依据、相关菜品与正常拒答，真实微信验收通过 |
 | Read-only Ordering Agent | 三个菜单Tool、Executor allowlist、原生Function Calling和有限多步Agent Loop，真实云端验收通过 |
-| Cart Action Proposal | `prepare_add_to_cart`重新查询菜品状态与价格，生成无副作用的Pending Action；确认执行留到后续阶段 |
+| Cart Action Proposal | `prepare_add_to_cart`重新查询菜品状态与价格，生成无副作用的Pending Action；后端本身不修改购物车 |
+| Cart Confirmation UI | 用户通过按钮确认提案；前端重新读取实时菜单，状态与价格一致后才调用现有Pinia购物车；真实微信验收通过 |
 
 ## AI / RAG 如何工作
 
@@ -71,6 +73,8 @@
 **RAG 菜单问答**先将 Query 转为512维向量，从 verified knowledge_chunks 做 Exact Cosine Top-3，再查询关联实时菜品。Qwen仅返回 `answerable`、`dishIds`、`usedKnowledgeIds`；服务器验证引用，取回本次检索证据，按原文换行生成最终回答。模型不能自由改写最终事实措辞。
 
 **Ordering Agent**把Registry作为唯一Tool定义源，Qwen通过原生 `tool_calls` 自主选择工具；服务器解析参数并继续通过Executor allowlist和Schema校验，再以 `role=tool` 回传真实结果。V5.3新增的 `prepare_add_to_cart` 只接受dishId和数量，重新查询真实状态与价格并生成待确认提案；它不会修改Pinia购物车。RAG与Agent当前是两项独立能力，RAG尚未注册为Agent Tool。
+
+**V5.4前端确认流程**只接受正式 `agent.run()` 返回的合法提案。用户点击确认后，页面重新读取真实菜单；菜品不存在、售罄或价格变化都会让旧提案失效。只有校验通过后才显式调用现有Pinia `addDish`。V5.4 frontend confirmation flow has been integrated and validated in the WeChat mini-program.
 
 知识维护单向流转：
 
@@ -108,6 +112,8 @@ docs/rag/knowledge-source.json（唯一人工维护源）
 
 **Validated Cart Action Proposal也已完成真实云端验收。** “把柠檬茶加两杯到购物车”会先查询实时菜单，再生成数量2、单价12元、总价24元且需要确认的Pending Action；没有购物车写操作。模型面对售罄酸梅汤会停止，直接强制调用Action Preparation Tool也会被服务端以 `AGENT_ACTION_DISH_UNAVAILABLE` 拒绝。Agent can prepare a server-validated cart action that requires explicit confirmation before execution. 详见 [Action Proposal](docs/agent/ACTIONS.md)。
 
+**V5.4微信确认流程已真实验收。** 柠檬茶提案确认前购物车保持不变；点击确认后，前端重新读取实时菜单并验证状态、12元单价与提案金额，随后复用Pinia准确增加2杯。取消不会再次调用Qwen、读取菜单或修改购物车；售罄酸梅汤不会产生确认卡。准确能力名称是：**Action-capable Ordering Agent with server-validated pending actions, explicit user confirmation, and frontend cart execution.**
+
 ## 如何运行
 
 准备 Node.js 20+、pnpm、HBuilderX 和微信开发者工具。在项目根目录执行：
@@ -127,6 +133,7 @@ pnpm run build:mp-weixin
 3. [Answer API](docs/rag/ANSWER_API.md)：rag模型环境变量和管理测试入口。
 4. [Agent Loop](docs/agent/AGENT_LOOP.md)：agent独立环境变量、Function Calling协议、管理Trace和真实验收。
 5. [Action Proposal](docs/agent/ACTIONS.md)：购物车待确认动作、服务端校价和无副作用边界。
+6. [User Confirmation](docs/agent/CONFIRMATION.md)：微信确认按钮、实时菜单复核与Pinia购物车执行边界。
 
 ai读取 `DASHSCOPE_API_KEY`、`LLM_BASE_URL`、`LLM_MODEL`；rag独立读取 `DASHSCOPE_API_KEY`、`LLM_BASE_URL`、`EMBEDDING_MODEL`、`EMBEDDING_DIMENSION`、`RAG_LLM_MODEL`；agent也在自身云对象中独立读取 `DASHSCOPE_API_KEY`、`LLM_BASE_URL`、`AGENT_LLM_MODEL`。Embedding为qwen3.7-text-embedding-flash/512，Generation和Agent目标模型为qwen3.8-flash；真实密钥只配置到云端，不能写入仓库。
 
@@ -152,9 +159,9 @@ git diff --check
 
 ## Known Limitations / Roadmap
 
-当前为21-chunk小知识库，12-query评测规模有限；RAG仅支持单轮，Evidence Selection仍可能漏选，Answerability存在False Negative，Top-3可能不完整。Ordering Agent同样是单次用户任务，只能准备购物车待确认动作，没有conversation memory、Cart/Order Write Tool或确认执行协议；当前不是production-ready系统。
+当前为21-chunk小知识库，12-query评测规模有限；RAG仅支持单轮，Evidence Selection仍可能漏选，Answerability存在False Negative，Top-3可能不完整。Ordering Agent同样是单次用户任务；购物车副作用只在用户点击按钮并通过实时复核后发生，没有conversation memory、云端Cart/Order Write Tool、action token或订单执行能力；当前不是production-ready系统。
 
-未来可先扩展人工评测和失败分析，再以冻结baseline比较检索/选择策略；身份认证、生产治理和更大规模数据需另行设计。多轮记忆以及带确认协议的Cart/Order Action Tool属于后续阶段。
+未来可先扩展人工评测和失败分析，再以冻结baseline比较检索/选择策略；身份认证、生产治理和更大规模数据需另行设计。多轮记忆以及服务端Cart/Order Write Tool属于后续阶段。
 
 ## 文档导航
 
@@ -167,4 +174,5 @@ git diff --check
 | [正式Answer接口](docs/rag/ANSWER_API.md) / [端到端评测](docs/rag/ANSWER_EVALUATION.md) | 调用合同、错误、指标和复现 |
 | [Agent Tool](docs/agent/TOOLS.md) / [Agent Loop](docs/agent/AGENT_LOOP.md) | 只读工具合同、Function Calling、循环边界与真实验收 |
 | [Action Proposal](docs/agent/ACTIONS.md) | Action Preparation Tool、Pending Action与确认边界 |
+| [User Confirmation](docs/agent/CONFIRMATION.md) | 显式UI确认、实时菜单复核、Pinia执行与失效规则 |
 | [简历素材](docs/RESUME_NOTES.md) / [面试说明](docs/INTERVIEW_NOTES.md) | 求职表达，不属于产品运行功能 |

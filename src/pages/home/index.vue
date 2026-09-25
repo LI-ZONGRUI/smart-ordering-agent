@@ -19,6 +19,12 @@
     </view>
 
     <view class="card">
+      <view class="section-title">智能点餐 Agent</view>
+      <text class="muted">查询实时菜单，并在你确认后执行购物车操作。</text>
+      <button class="primary-button menu-button" @click="goToAgent">智能点餐 Agent</button>
+    </view>
+
+    <view class="card">
       <view class="section-title">现在可以体验</view>
       <text class="muted">浏览云端菜品、加入购物车、提交订单，再到订单页查看记录。</text>
     </view>
@@ -26,6 +32,10 @@
 </template>
 
 <script setup>
+function goToAgent() {
+  uni.navigateTo({ url: '/pages/agent/index' })
+}
+
 function goToMenuQuestion() {
   uni.navigateTo({ url: '/pages/rag-qa/index' })
 }
