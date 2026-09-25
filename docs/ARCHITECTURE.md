@@ -1,6 +1,6 @@
 # 项目整体架构
 
-这是Vue3 + uni-app + Pinia + uniCloud的微信点餐项目，包含传统点餐、独立LLM推荐、单轮RAG知识问答和Ordering Agent。当前Agent后端只生成购物车动作提案；用户在前端明确确认并通过实时菜单复核后，才修改Pinia购物车。结算提案由Pinia购物车直接调用orders服务，不经过模型；当前仍不创建订单，也不是完整自动点餐系统。
+这是Vue3 + uni-app + Pinia + uniCloud的微信点餐项目，包含传统点餐、独立LLM推荐、单轮RAG知识问答和Ordering Agent。当前Agent后端只生成购物车动作提案；用户在前端明确确认并通过实时菜单复核后，才修改Pinia购物车。结算与最终订单确认由Pinia购物车直接调用orders服务，不经过模型；当前不包含支付，也不是完整自主点餐系统。
 
 ## 1. 组件关系
 
@@ -70,16 +70,17 @@ Pinia Cart
  → Frontend Structure / Cents Validation
  → Order Pending Action
  → Explicit Information Confirmation
- → STOP
-
-V5.5C（下一阶段，尚未实现）：
-Explicit Order Confirmation
- → createOrder()
+ → Final Explicit Order Confirmation
+ → orders.createConfirmedOrder()
  → 再次 Server Validation / Pricing
+ → Expected Preview Comparison
  → Persisted Order
+ → Cart Clear
 ```
 
 Preview与Create共享items校验、重复dishId拒绝、实时菜品查询、在售校验、1～99数量规则和整数分计价；订单最多包含1～30种菜品。Preview是server-validated checkout proposal，不是持久订单、交易、预留、支付意图、授权Token或不可变价格保证。真实验收中，柠檬茶两杯返回总价24元，售罄酸梅汤被 `ORDER_DISH_UNAVAILABLE` 拒绝；检查orders集合未观察到本次Preview创建的新记录。V5.5B前端保存dishId/quantity快照，确认信息时检测购物车变化；确认只改变页面状态。**Checkout proposal flow has been integrated and validated in the WeChat mini-program.**
+
+V5.5C增加独立最终按钮和 `createConfirmedOrder()`。服务器在同一次请求中重新计价，以dishId Map逐项比较quantity、unitPrice、lineTotal及汇总金额，一致后才调用共享持久化helper。成功后前端才清空Cart；失败保留Cart。**Confirmed order execution has been validated in the WeChat mini-program and the real uniCloud orders collection.** 真实成功场景持久化了柠檬茶两杯、总价24元、状态 `pending` 的订单，页面与数据库订单号均为 `OD1790357975859B4A2B5`；价格变化与最终售罄场景均拒绝写入、保留Cart并让旧Proposal失效。当前只有客户端防双击，没有requestId与服务器重试幂等；也没有库存事务或serializable transaction。
 
 ## 4. AI推荐、RAG与Agent分工
 
@@ -134,6 +135,10 @@ V5.5B在同一Agent页面增加独立的 `orderPendingAction`。它从Pinia购�
 
 V5.5B真实微信验收确认：柠檬茶两杯显示单价12元、合计24元；“确认订单信息”后购物车不变且orders集合无新增记录；测试菜品临时设为 `sold_out` 时显示安全业务错误且不生成确认卡。跨页保留旧Preview再修改Cart的场景受当前页面生命周期和TabBar导航影响，本次没有稳定复现；数量改变、项目新增和删除导致快照失效由自动化测试覆盖。该快照机制是客户端提案一致性保护，不是数据库并发控制。
 
+V5.5C订单创建仍不注册为Agent Tool。Qwen不接收Cart状态或expectedPreview，也不能触发订单写入；只有微信页面的显式最终确认调用orders云对象。详见 [Order Execution](agent/ORDER_EXECUTION.md)。
+
+当前已真实验收的端到端主链为：自然语言请求 → Qwen Ordering Agent → 原生Function Calling → 多步Tool编排 → 服务端校验的购物车动作提案 → 用户显式确认 → Pinia购物车真实变更 → 服务端订单预览 → 订单信息确认 → 最终下单确认 → 服务端再次校验 → 持久化订单。它仍不包含自动支付、Agent自主支付、无人确认自动下单或完整支付闭环；最终交易执行属于确定性的服务器边界。
+
 V5.4已在微信开发者工具完成真实验收：柠檬茶数量2的提案在确认前不改变购物车，确认并通过实时复核后准确增加2杯；取消不产生副作用；售罄酸梅汤不显示确认卡。这里的重新查询缓解Pending Action生成与用户点击之间的TOCTOU数据变化，但客户端Pinia不是事务系统，订单创建仍必须由orders云对象重新校验状态和价格。
 
 RAG继续作为独立的单轮菜单知识问答能力，当前没有注册为Agent Tool。
@@ -156,4 +161,5 @@ RAG继续作为独立的单轮菜单知识问答能力，当前没有注册为Ag
 - [V5.4 User Confirmation](agent/CONFIRMATION.md)
 - [V5.5A Order Preview](agent/ORDER_PREVIEW.md)
 - [V5.5B Checkout Proposal](agent/ORDER_PROPOSAL.md)
+- [V5.5C Order Execution](agent/ORDER_EXECUTION.md)
 - [部署步骤](UNICLOUD_SETUP.md) / [README运行说明](../README.md)

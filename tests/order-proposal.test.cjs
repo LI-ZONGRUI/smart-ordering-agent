@@ -218,12 +218,12 @@ test('Cart Pending Action与Order Pending Action保持独立', async () => {
   assert.deepEqual(page.cartPendingAction.value, cartAction); assert.equal(page.orderPendingAction.value, null)
 })
 
-test('页面与Preview流程没有createOrder、清空购物车或订单成功文案', () => {
+test('V5.5B信息确认仍不调用旧createOrder，V5.5C只接正式confirmed接口', () => {
   const pageScript = pageText.match(/<script setup>([\s\S]*?)<\/script>/)[1]
-  assert.equal(pageScript.includes('createOrder'), false)
-  assert.equal(pageScript.includes('clearCart'), false)
-  assert.equal(pageText.includes('下单成功'), false)
-  assert.equal(pageText.includes('确认下单'), false)
+  assert.equal(/\bcreateOrder\s*\(/.test(pageScript), false)
+  assert.equal(pageScript.includes('createConfirmedOrder'), true)
+  assert.equal(pageText.includes('确认订单信息'), true)
+  assert.equal(pageText.includes('确认下单'), true)
 })
 
 test('正式Service不引用order-preview-admin且Preview路径不调用createOrder', async () => {

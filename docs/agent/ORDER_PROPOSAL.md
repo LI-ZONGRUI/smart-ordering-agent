@@ -142,21 +142,22 @@ Pinia Cart
 
 未知错误统一泛化，不展示stack、数据库信息、云函数路径或原始异常。
 
-## 下一阶段
+## 后续订单执行
 
-V5.5C（尚未实现）：
+V5.5C 已完成代码实现和真实微信、uniCloud持久化验收：
 
 ```text
-Explicit Order Confirmation
- → orders.createOrder()
+Explicit Final Order Confirmation
+ → orders.createConfirmedOrder()
  → 服务端再次校验与计价
+ → 与已确认Preview逐项比较
  → Persisted Order
 ```
 
-V5.5B停在信息确认，不实现订单持久化、Agent Order Tool或支付。
+V5.5B本身仍停在信息确认；V5.5C通过独立最终按钮才执行持久化。详见 [Order Execution](ORDER_EXECUTION.md)。Agent Order Tool和支付仍未实现。
 
 阶段状态：
 
 - V5.5A：Server-validated Order Preview，已完成。
 - V5.5B：Pinia Cart → Preview → Order Pending Action → Explicit Information Confirmation → STOP，已完成并通过真实微信验收。
-- V5.5C：Final Order Confirmation → Server Revalidation → createOrder → Persisted Order，下一阶段，尚未实现。
+- V5.5C：Final Order Confirmation → Server Revalidation → Confirmed Preview Comparison → Persisted Order，已完成真实微信和uniCloud验收。成功场景创建了与页面orderNo一致的订单；价格变化和最终售罄场景均拒绝写入并保留Cart。

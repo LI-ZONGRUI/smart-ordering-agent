@@ -4,11 +4,21 @@ const MAX_ORDER_ITEM_TYPES = 30
 const MAX_ITEM_QUANTITY = 99
 const PREVIEW_KEYS = ['items', 'requiresConfirmation', 'totalPrice', 'totalQuantity']
 const PREVIEW_ITEM_KEYS = ['dishId', 'lineTotal', 'name', 'quantity', 'unitPrice']
+const ORDER_ACTION_KEYS = ['items', 'requiresConfirmation', 'totalPrice', 'totalQuantity', 'type']
+const CREATED_ORDER_KEYS = ['_id', 'clientId', 'createTime', 'items', 'orderNo', 'remark', 'status', 'totalCount', 'totalPrice']
+const CREATED_ORDER_ITEM_KEYS = ['dishId', 'name', 'price', 'quantity', 'subtotal']
 const PREVIEW_ERROR_MESSAGES = Object.freeze({
   ORDER_ITEMS_INVALID: '购物车内容无效，请返回购物车检查。',
   ORDER_DISH_NOT_FOUND: '购物车中有菜品已下架，请重新选择。',
   ORDER_DISH_UNAVAILABLE: '购物车中有菜品当前不可用，请返回购物车处理。',
   ORDER_PREVIEW_FAILED: '暂时无法生成订单预览，请稍后重试。'
+})
+const CREATE_ERROR_MESSAGES = Object.freeze({
+  ORDER_ITEMS_INVALID: '订单内容无效，请重新生成预览。',
+  ORDER_DISH_NOT_FOUND: '购物车中有菜品已下架，请重新生成预览。',
+  ORDER_DISH_UNAVAILABLE: '购物车中有菜品当前不可用，请重新生成预览。',
+  ORDER_CONFIRMATION_STALE: '订单信息已变化，请重新生成预览并确认。',
+  ORDER_CREATE_FAILED: '暂时无法创建订单，请稍后重试。'
 })
 
 function createPreviewError(errCode = 'ORDER_PREVIEW_FAILED') {
@@ -21,6 +31,15 @@ function createPreviewError(errCode = 'ORDER_PREVIEW_FAILED') {
 function readErrorCode(error) {
   const code = error?.errCode || error?.code || error?.data?.errCode
   return typeof code === 'string' ? code : ''
+}
+
+function createOrderError(errCode = 'ORDER_CREATE_FAILED') {
+  const safeCode = Object.hasOwn(CREATE_ERROR_MESSAGES, errCode) ? errCode : 'ORDER_CREATE_FAILED'
+  const error = new Error(CREATE_ERROR_MESSAGES[safeCode])
+  error.errCode = safeCode
+  error.invalidateProposal = ['ORDER_ITEMS_INVALID', 'ORDER_DISH_NOT_FOUND',
+    'ORDER_DISH_UNAVAILABLE', 'ORDER_CONFIRMATION_STALE'].includes(safeCode)
+  return error
 }
 
 function hasExactKeys(value, expectedKeys) {
@@ -112,6 +131,81 @@ export function isSameCartSnapshot(cartItems, snapshot) {
   return current.every(item => snapshotMap.get(item.dishId) === item.quantity)
 }
 
+export function buildExpectedPreview(orderPendingAction) {
+  if (!hasExactKeys(orderPendingAction, ORDER_ACTION_KEYS) || orderPendingAction.type !== 'create_order' ||
+      orderPendingAction.requiresConfirmation !== true || !Array.isArray(orderPendingAction.items) ||
+      orderPendingAction.items.length === 0 || orderPendingAction.items.length > MAX_ORDER_ITEM_TYPES) {
+    throw createOrderError('ORDER_ITEMS_INVALID')
+  }
+
+  let totalQuantity = 0
+  let totalCents = 0
+  const seen = new Set()
+  const items = orderPendingAction.items.map((item) => {
+    const unitCents = toCents(item?.unitPrice)
+    const lineTotalCents = toCents(item?.lineTotal)
+    if (!hasExactKeys(item, PREVIEW_ITEM_KEYS) || typeof item.dishId !== 'string' || !item.dishId ||
+        typeof item.name !== 'string' || !item.name.trim() || seen.has(item.dishId) ||
+        !Number.isInteger(item.quantity) || item.quantity < 1 || item.quantity > MAX_ITEM_QUANTITY ||
+        unitCents === null || lineTotalCents === null || !Number.isSafeInteger(unitCents * item.quantity) ||
+        unitCents * item.quantity !== lineTotalCents) {
+      throw createOrderError('ORDER_ITEMS_INVALID')
+    }
+    seen.add(item.dishId)
+    totalQuantity += item.quantity
+    totalCents += lineTotalCents
+    if (!Number.isSafeInteger(totalQuantity) || !Number.isSafeInteger(totalCents)) {
+      throw createOrderError('ORDER_ITEMS_INVALID')
+    }
+    return { dishId: item.dishId, quantity: item.quantity,
+      unitPrice: unitCents / 100, lineTotal: lineTotalCents / 100 }
+  })
+
+  const confirmedTotalCents = toCents(orderPendingAction.totalPrice)
+  if (!Number.isInteger(orderPendingAction.totalQuantity) || orderPendingAction.totalQuantity !== totalQuantity ||
+      confirmedTotalCents === null || confirmedTotalCents !== totalCents) {
+    throw createOrderError('ORDER_ITEMS_INVALID')
+  }
+  return { items, totalQuantity, totalPrice: totalCents / 100 }
+}
+
+function validateCreatedOrderResponse(response, expectedPreview, clientId, remark) {
+  const order = response?.order
+  if (!hasExactKeys(response, ['errCode', 'order']) || response.errCode !== 0 ||
+      !hasExactKeys(order, CREATED_ORDER_KEYS) || typeof order._id !== 'string' || !order._id ||
+      typeof order.orderNo !== 'string' || !/^OD\d+[A-F0-9]{6}$/.test(order.orderNo) ||
+      order.clientId !== clientId || order.status !== 'pending' || order.remark !== remark.trim() ||
+      !Number.isInteger(order.createTime) || !Array.isArray(order.items) ||
+      order.items.length !== expectedPreview.items.length) {
+    throw createOrderError()
+  }
+
+  const expectedMap = new Map(expectedPreview.items.map(item => [item.dishId, item]))
+  let totalCount = 0
+  let totalCents = 0
+  const seen = new Set()
+  for (const item of order.items) {
+    const expected = expectedMap.get(item?.dishId)
+    const priceCents = toCents(item?.price)
+    const subtotalCents = toCents(item?.subtotal)
+    if (!hasExactKeys(item, CREATED_ORDER_ITEM_KEYS) || !expected || seen.has(item.dishId) ||
+        typeof item.name !== 'string' || !item.name.trim() || item.quantity !== expected.quantity ||
+        priceCents !== toCents(expected.unitPrice) || subtotalCents !== toCents(expected.lineTotal)) {
+      throw createOrderError()
+    }
+    seen.add(item.dishId)
+    totalCount += item.quantity
+    totalCents += subtotalCents
+    if (!Number.isSafeInteger(totalCount) || !Number.isSafeInteger(totalCents)) throw createOrderError()
+  }
+  if (order.totalCount !== totalCount || toCents(order.totalPrice) !== totalCents ||
+      totalCount !== expectedPreview.totalQuantity || totalCents !== toCents(expectedPreview.totalPrice)) {
+    throw createOrderError()
+  }
+  // UI只需要用户可读订单号，不向页面扩散数据库内部_id。
+  return { orderNo: order.orderNo }
+}
+
 export async function previewOrder(cartItems) {
   const items = buildOrderPreviewItems(cartItems)
   try {
@@ -125,6 +219,21 @@ export async function previewOrder(cartItems) {
     }
   } catch (error) {
     throw createPreviewError(readErrorCode(error))
+  }
+}
+
+export async function createConfirmedOrder(cartItems, orderPendingAction, remark = '') {
+  const items = buildOrderPreviewItems(cartItems)
+  const expectedPreview = buildExpectedPreview(orderPendingAction)
+  if (typeof remark !== 'string' || remark.length > 200) throw createOrderError('ORDER_ITEMS_INVALID')
+  const clientId = getClientId()
+  try {
+    const orders = uniCloud.importObject('orders', { customUI: true })
+    const response = await orders.createConfirmedOrder({ clientId, items, expectedPreview, remark })
+    if (response?.errCode !== 0) throw createOrderError(readErrorCode(response))
+    return validateCreatedOrderResponse(response, expectedPreview, clientId, remark)
+  } catch (error) {
+    throw createOrderError(readErrorCode(error))
   }
 }
 
