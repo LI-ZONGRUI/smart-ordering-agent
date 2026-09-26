@@ -72,7 +72,8 @@ keys, or limits.
 
 V7.1A intentionally has no production `MenuGateway`. Therefore a production run first validates
 the Qwen configuration, then safely reports that the menu tool layer is unavailable. It never
-falls back to the in-memory fixture. V7.1B will add the real authenticated read-only gateway.
+falls back to the in-memory fixture. V7.1B-1 has implemented the authenticated server-side
+Gateway, but the Python HTTP client remains pending for V7.1B-2.
 
 ## HTTP contract
 
@@ -159,7 +160,9 @@ container deployment is claimed.
 
 - **V7.1A complete locally:** Python service, adapter, gateway port, read-only tools, real
   LangChain loop with an offline model, HTTP and safety tests.
-- **Not complete:** real Qwen acceptance, real uniCloud menu integration, service authentication,
-  remote deployment, frontend integration, and custom LangGraph orchestration.
-- **V7.1B:** authenticated `UniCloudHttpMenuGateway` and real read-only acceptance.
+- **Not complete:** real Qwen acceptance, real Python-to-uniCloud menu integration and
+  service-auth client, remote deployment, frontend integration, and custom LangGraph orchestration.
+- **V7.1B-1 accepted on real uniCloud:** shared domain and authenticated server-side Gateway. The
+  Python service did not participate in that acceptance and still has no HTTP Gateway client.
+- **V7.1B-2:** Python `UniCloudHttpMenuGateway` and real read-only acceptance.
 - **V7.2:** explicit LangGraph orchestration after the service boundary is stable.

@@ -1,12 +1,12 @@
 {
-  "name": "agent",
+  "name": "framework-gateway",
   "version": "1.0.0",
-  "main": "index.obj.js",
+  "main": "index.js",
   "dependencies": {
     "menu-read-domain": "file:../common/menu-read-domain"
   },
   "cloudfunction-config": {
-    "timeout": 180
+    "timeout": 30
   },
   "extensions": {}
 }

@@ -24,9 +24,12 @@ Independent Python framework service (V7.1A local only)
   MenuGateway port
 ```
 
-The future integration direction is service-to-service access through an authenticated,
-read-only `UniCloudHttpMenuGateway`. The Python service will not access uniCloud collections or
-copy database rules directly.
+V7.1B-1 now provides the server-side shared read-only menu domain and authenticated uniCloud
+`framework-gateway`, and that server-side boundary has passed real uniCloud URLized HTTP, HMAC,
+allowlist, and live-menu acceptance. The Python `UniCloudHttpMenuGateway` client is still not
+implemented, so no real Python-to-uniCloud HTTP integration or acceptance is claimed. When
+V7.1B-2 adds that client, the Python service will not access uniCloud collections or copy database
+rules directly.
 
 ## MenuGateway port
 
@@ -80,9 +83,9 @@ recursion limit bounds the agent cycle and FastAPI applies an overall 20-second 
 
 ### V7.1B
 
-- Define an authenticated read-only HTTP contract from Python to the business core.
-- Add `UniCloudHttpMenuGateway` without changing LangChain Tool contracts.
-- Validate Qwen and real menu reads in a controlled environment.
+- **V7.1B-1 accepted on real uniCloud:** shared menu domain and authenticated read-only server Gateway.
+- **V7.1B-2 pending:** add `UniCloudHttpMenuGateway` without changing LangChain Tool contracts.
+- Later validate Qwen and real menu reads in a controlled environment.
 
 ### V7.2
 

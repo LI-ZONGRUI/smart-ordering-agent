@@ -15,6 +15,11 @@ V7.1A 在现有系统旁新增独立的 Python FastAPI + LangChain 本地框架�
 连接真实 uniCloud、Qwen 或微信端，不拥有数据库或交易职责，也没有显式自定义 LangGraph
 流程。
 
+V7.1B-1 已把 Native Agent 的三个只读菜单能力抽取到 uniCloud Shared Menu Domain，并让
+Native Agent 与经过 HMAC-SHA256 认证的 URL 化 Framework Gateway 复用同一实现。Shared
+Domain、Gateway 和真实 uniCloud 菜单读取均已完成云端验收；Python 服务尚未实现
+`UniCloudHttpMenuGateway`，因此仍只使用 `InMemoryMenuGateway`，没有接入这条真实链路。
+
 ## 2. 分层架构
 
 ```mermaid
@@ -95,8 +100,20 @@ graph TB
   PRICE --> O
 ```
 
-未来接入方向留到 V7.1B：Python 服务将通过经过认证的只读网关访问现有业务核心；当前
-架构图不把它连接到数据库，以免误示已经完成真实集成。
+当前附加的真实只读边界为：
+
+```text
+Native Agent ───────────────┐
+                            ├─ Shared Menu Domain ── Real uniCloud DB
+Framework Gateway ─────────┘
+
+Local signed acceptance client ── HTTPS + HMAC ── Framework Gateway
+
+Python LangChain Service ── MenuGateway ── InMemoryMenuGateway only
+```
+
+V7.1B-2 才会实现 Python `UniCloudHttpMenuGateway`。当前架构不把 Python 服务连接到
+Framework Gateway 或数据库，以免误示 Python 端真实集成已经完成。
 
 ### Client Layer
 
@@ -332,7 +349,9 @@ RAG 端到端评测使用21条知识与12条固定 Query：
 - Evidence Hit Rate：5/6 supported，83.33%。
 - Server Grounding Pass：12/12，100%。
 
-这是项目级小样本评测，不是生产 Benchmark。项目冻结时全部747项自动化测试通过，另有微信开发者工具、真实 uniCloud 数据库与管理入口验收记录。
+这是项目级小样本评测，不是生产 Benchmark。V6 冻结时为747项自动化测试；加入 V7.1B-1
+Shared Domain 与 Gateway 回归后，当前完整 JavaScript 测试为808项，并另有微信开发者工具、
+真实 uniCloud 数据库、管理入口和 URL 化 Gateway 验收记录。
 
 ## 9. 信任边界
 

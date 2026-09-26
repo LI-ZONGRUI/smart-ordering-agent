@@ -11,6 +11,12 @@ V7.1A 另行建立了一个独立的 Python 3.11 + FastAPI + LangChain 本地框
 微信前端，也没有自定义 LangGraph 工作流；现有交易主链保持不变。详见
 [Framework Agent Service](services/framework-agent/README.md)。
 
+V7.1B-1 已在 uniCloud 侧把三个只读菜单能力抽取为同一 Shared Domain，并新增 HMAC-SHA256
+认证的只读 Framework Gateway。该 Gateway 已通过真实 uniCloud URL 化、HMAC 和线上菜单数据
+验收，Native Agent 也完成抽取后的真实回归。Python HTTP Gateway Client 仍未实现，因此当前
+不能宣称 LangChain 已读取线上菜单。协议与验收记录见
+[Framework Gateway](docs/framework/FRAMEWORK_GATEWAY.md)。
+
 ## 核心亮点
 
 1. **Evidence-grounded RAG**：模型只选择可信 evidence ID，服务器验证后直接使用知识原文渲染答案，避免模型自由改写事实。
@@ -277,6 +283,7 @@ pnpm run build:mp-weixin
 | ai | `DASHSCOPE_API_KEY`、`LLM_BASE_URL`、`LLM_MODEL` |
 | rag | `DASHSCOPE_API_KEY`、`LLM_BASE_URL`、`EMBEDDING_MODEL`、`EMBEDDING_DIMENSION`、`RAG_LLM_MODEL` |
 | agent | `DASHSCOPE_API_KEY`、`LLM_BASE_URL`、`AGENT_LLM_MODEL` |
+| framework-gateway | `FRAMEWORK_GATEWAY_SECRET` |
 
 真实 API Key 只配置在远程环境，不写入源码、日志或 Git。`.env`、`.hbuilderx/`、服务空间绑定文件和云函数 `*.param.json` 均由 Git 忽略。
 
