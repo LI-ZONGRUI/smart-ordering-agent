@@ -86,7 +86,7 @@
 
 **V5.5C最终订单确认**新增确定性的 `orders.createConfirmedOrder()`：最终按钮点击后，服务器重新读取菜品状态和价格，逐项核对用户已确认Preview，完全一致才复用原订单快照结构持久化；成功响应后才清空Pinia购物车。价格变化返回 `ORDER_CONFIRMATION_STALE`，售罄和任何失败均保留Cart。该流程不经过Qwen，没有Agent Order Tool或支付。**Confirmed order execution has been validated in the WeChat mini-program and the real uniCloud orders collection.** 详见 [Order Execution](docs/agent/ORDER_EXECUTION.md)。
 
-**V5.6A服务器订单幂等基础**为 `createConfirmedOrder()` 增加可选requestId。相同requestId和相同规范化fingerprint返回首次订单；内容或clientId不同返回 `ORDER_IDEMPOTENCY_CONFLICT`。真实控制台已确认 `request_id_unique` 为requestId升序、unique和sparse，历史无requestId订单无需迁移；真实重试返回第一次的同一orderNo且没有新增第二条记录，不同订单意图被冲突错误拒绝。指纹不会返回客户端。当前微信前端尚未传requestId。**Server-side order idempotency has been validated against the real uniCloud orders collection with a unique sparse requestId index.** 详见 [Order Idempotency](docs/agent/ORDER_IDEMPOTENCY.md)。
+**V5.6A服务器订单幂等基础**为 `createConfirmedOrder()` 增加可选requestId。相同requestId和相同规范化fingerprint返回首次订单；内容或clientId不同返回 `ORDER_IDEMPOTENCY_CONFLICT`。真实控制台已确认 `request_id_unique` 为requestId升序、unique和sparse；真实重试返回第一次的同一orderNo且没有新增第二条记录，不同订单意图被冲突错误拒绝。V5.6B正式微信Checkout在第一次最终提交时生成requestId并冻结payload，结果未知时复用同一key与同一payload。真实微信订单已在orders集合观察到非空requestId与requestFingerprint，金额24元、数量2、状态pending。完整key和fingerprint不写入文档。刷新或小程序重启后的持久恢复尚未实现。**Server-side idempotent order creation has been integrated into and validated through the real WeChat checkout flow.** 详见 [Order Idempotency](docs/agent/ORDER_IDEMPOTENCY.md)。
 
 知识维护单向流转：
 
@@ -130,7 +130,7 @@ docs/rag/knowledge-source.json（唯一人工维护源）
 
 **V5.5B Checkout Proposal Flow已完成真实微信验收。** 购物车中柠檬茶两杯可生成单价12元、合计24元的服务端订单提案；点击“确认订单信息”后只显示已确认但尚未创建订单，购物车和orders集合保持不变。不可用菜品会显示友好错误且不生成确认卡。购物车数量/项目变化导致旧Preview失效的边界由自动化测试覆盖，本次未把跨页场景表述为真实UI复现。在V5.5B阶段，该确认不是下单，也不执行订单持久化；V5.5C的最终确认与创建状态见下文。Agent Order Tool和支付仍未实现。
 
-**V5.5C Confirmed Order Execution已完成真实微信与uniCloud验收。** 柠檬茶两杯以单价12元、总价24元完成最终确认，页面显示的订单号 `OD1790357975859B4A2B5` 与orders集合持久化记录一致，状态为 `pending`，服务端成功后Cart清空。价格从12元临时变为13元时返回 `ORDER_CONFIRMATION_STALE`，没有按26元创建订单；最终确认前临时售罄时同样拒绝写入。两种失败均保留Cart并使旧Proposal失效，测试数据随后已恢复。V5.6A服务器幂等能力已完成真实uniCloud验收，但微信正式Checkout接入requestId仍属于V5.6B。
+**V5.5C Confirmed Order Execution已完成真实微信与uniCloud验收。** 柠檬茶两杯以单价12元、总价24元完成最终确认，页面显示的订单号 `OD1790357975859B4A2B5` 与orders集合持久化记录一致，状态为 `pending`，服务端成功后Cart清空。价格从12元临时变为13元时返回 `ORDER_CONFIRMATION_STALE`，没有按26元创建订单；最终确认前临时售罄时同样拒绝写入。两种失败均保留Cart并使旧Proposal失效，测试数据随后已恢复。V5.6A服务端幂等与V5.6B正式微信Checkout现已真实接通；最新验收订单包含非空requestId与requestFingerprint。
 
 当前主业务链已经真实覆盖：Natural Language Request → Qwen Ordering Agent → Native Function Calling → Multi-step Tool Orchestration → Server-validated Cart Action Proposal → Explicit User Confirmation → Real Pinia Cart Mutation → Server-validated Order Preview → Explicit Order Information Confirmation → Final Explicit Order Confirmation → Fresh Server Revalidation → Persisted Order。它可以描述为“具备多步工具调用、服务端动作校验、显式用户确认和真实订单持久化能力的智能点餐Agent”。最终交易执行仍是确定性的服务器边界，不是LLM自主调用订单Tool；当前没有自动支付、Agent自主支付、无人确认自动下单或完整支付闭环。
 
@@ -157,7 +157,7 @@ pnpm run build:mp-weixin
 7. [Order Preview](docs/agent/ORDER_PREVIEW.md)：服务端只读订单预览、共享校验计价和HBuilderX验收参数。
 8. [Checkout Proposal](docs/agent/ORDER_PROPOSAL.md)：Pinia购物车到服务端预览、订单提案、快照失效与信息确认边界。
 9. [Order Execution](docs/agent/ORDER_EXECUTION.md)：最终确认、服务端重新计价、确认值比较与持久化。
-10. [Order Idempotency](docs/agent/ORDER_IDEMPOTENCY.md)：requestId、规范化指纹、稀疏唯一索引、并发冲突恢复与部署步骤。
+10. [Order Idempotency](docs/agent/ORDER_IDEMPOTENCY.md)：requestId、规范化指纹、稀疏唯一索引、前端冻结payload、安全重试与部署步骤。
 
 ai读取 `DASHSCOPE_API_KEY`、`LLM_BASE_URL`、`LLM_MODEL`；rag独立读取 `DASHSCOPE_API_KEY`、`LLM_BASE_URL`、`EMBEDDING_MODEL`、`EMBEDDING_DIMENSION`、`RAG_LLM_MODEL`；agent也在自身云对象中独立读取 `DASHSCOPE_API_KEY`、`LLM_BASE_URL`、`AGENT_LLM_MODEL`。Embedding为qwen3.7-text-embedding-flash/512，Generation和Agent目标模型为qwen3.8-flash；真实密钥只配置到云端，不能写入仓库。
 

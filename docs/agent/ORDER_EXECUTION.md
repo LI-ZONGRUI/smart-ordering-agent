@@ -52,11 +52,12 @@ Pinia Cart
     "totalQuantity": 2,
     "totalPrice": 24
   },
-  "remark": ""
+  "remark": "",
+  "requestId": "ord-..."
 }
 ```
 
-items从点击最终确认时的当前Pinia购物车重新提取，不发送客户端name、price或totalPrice。expectedPreview来自已通过前端结构校验并由用户确认的Order Pending Action；它是不可信的用户预期，不是订单价格来源。
+items从第一次点击最终确认时的当前Pinia购物车提取，不发送客户端name、price或totalPrice。expectedPreview来自已通过前端结构校验并由用户确认的Order Pending Action；它是不可信的用户预期，不是订单价格来源。requestId在这次最终提交前生成一次，同时冻结clientId、items、expectedPreview和remark；结果未知后的重试不再读取可能已经变化的Cart，而是复用完全相同的冻结payload。
 
 ## 服务端重新校验和比较
 
@@ -79,7 +80,9 @@ items从点击最终确认时的当前Pinia购物车重新提取，不发送客�
 | `ORDER_DISH_NOT_FOUND` | 菜品已不存在 | 保留Cart，清除旧提案 |
 | `ORDER_DISH_UNAVAILABLE` | 菜品不再可用 | 保留Cart，清除旧提案 |
 | `ORDER_CONFIRMATION_STALE` | 实时计价与已确认Preview不同 | 保留Cart，要求重新预览和确认 |
-| `ORDER_CREATE_FAILED` | 未知数据库或内部失败 | 保留Cart，固定安全文案，可重试 |
+| `ORDER_IDEMPOTENCY_CONFLICT` | requestId已对应不同订单意图 | 保留Cart，清除旧提案和requestId |
+| `ORDER_REQUEST_ID_INVALID` | requestId不符合服务端合同 | 保留Cart，清除旧提案和requestId |
+| `ORDER_CREATE_FAILED` | 创建结果可能无法确认 | 保留Cart、提案、requestId和冻结payload，用同一payload重试 |
 
 任何失败都不会清空购物车。未知异常不返回stack、数据库信息、内部路径或原始错误。
 
@@ -109,7 +112,7 @@ items从点击最终确认时的当前Pinia购物车重新提取，不发送客�
 
 重新计价、确认值比较和写入位于同一次服务端请求中，显著缩小Preview到Create之间的数据变化窗口，但当前没有库存事务或serializable transaction，不能描述为完全解决数据库并发一致性。
 
-UI可以阻止同一页面流程中的双击重复创建。V5.6A已经为 `createConfirmedOrder()` 实现可选requestId、request fingerprint和阿里云稀疏唯一索引，并通过真实uniCloud同键重放及冲突拒绝验收。当前微信前端尚未生成或传递requestId，正式Checkout接入属于V5.6B；在这之前，现有V5.5C UI流程不会自动使用服务器重试语义。详见 [Order Idempotency](ORDER_IDEMPOTENCY.md)。
+UI继续用 `submittingOrder` 阻止普通双击。V5.6A已经为 `createConfirmedOrder()` 实现可选requestId、request fingerprint和阿里云稀疏唯一索引，并通过真实uniCloud同键重放及冲突拒绝验收。V5.6B正式前端会生成并传递requestId：成功和幂等Replay走同一成功路径；明确业务失败清除旧key；网络、timeout和通用创建失败保留原key与冻结payload供显式重试。该保护当前只覆盖页面生命周期，不包含刷新或小程序重启后的持久恢复。**Server-side idempotent order creation has been integrated into and validated through the real WeChat checkout flow.** 详见 [Order Idempotency](ORDER_IDEMPOTENCY.md)。
 
 ## 真实微信与uniCloud验收
 
@@ -150,6 +153,17 @@ UI可以阻止同一页面流程中的双击重复创建。V5.6A已经为 `creat
 
 这验证了Preview阶段可售不代表最终创建时仍然可售，持久化之前必须再次执行实时菜品校验。
 
+### Scenario D：正式Checkout启用服务端幂等
+
+V5.6B部署后再次通过正式微信流程完成柠檬茶两杯的Preview、信息确认与最终确认。真实uniCloud `orders` 记录显示：
+
+- requestId存在且非空，使用 `ord-...` 格式。
+- requestFingerprint存在且非空。
+- `totalPrice=24`、`totalCount=2`、`status=pending`。
+- 服务端返回合法成功订单后，前端显示真实orderNo并清空Cart。
+
+这里不记录完整requestId或requestFingerprint，也不声称微信端人为复现了响应丢失。服务端同键重放由V5.6A真实admin验收证明；前端同key、同冻结payload重试由V5.6B自动化测试证明。
+
 ## 已验收的完整安全链
 
 ```text
@@ -159,7 +173,10 @@ Pinia Cart
  → Server-validated Order Preview
  → Explicit Information Confirmation
  → Final Explicit Order Confirmation
+ → Generate requestId Once
+ → Freeze Submission Payload
  → orders.createConfirmedOrder()
+ → Canonical Fingerprint / Unique Sparse Index
  → Fresh Server Validation / Pricing Again
  → Expected Preview Comparison
  → Persisted Order

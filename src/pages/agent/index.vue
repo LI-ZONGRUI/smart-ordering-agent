@@ -4,14 +4,14 @@
     <view class="intro muted">可以查询实时菜单，也可以帮你准备加入购物车操作。每次处理一个请求。</view>
 
     <view class="card">
-      <textarea v-model="query" class="query-input" :maxlength="-1" :disabled="loading || confirming || orderPreviewLoading || submittingOrder"
+      <textarea v-model="query" class="query-input" :maxlength="-1" :disabled="loading || confirming || orderPreviewLoading || submittingOrder || orderOutcomeUnknown"
         placeholder="例如：把柠檬茶加两杯到购物车" />
       <view class="counter muted">{{ queryLength }}/200</view>
       <view class="examples">
         <button v-for="example in examples" :key="example" class="example-chip" size="mini"
-          :disabled="loading || confirming || orderPreviewLoading || submittingOrder" @click="fillExample(example)">{{ example }}</button>
+          :disabled="loading || confirming || orderPreviewLoading || submittingOrder || orderOutcomeUnknown" @click="fillExample(example)">{{ example }}</button>
       </view>
-      <button class="primary-button" :disabled="loading || confirming || orderPreviewLoading || submittingOrder" :loading="loading" @click="submitQuery">
+      <button class="primary-button" :disabled="loading || confirming || orderPreviewLoading || submittingOrder || orderOutcomeUnknown" :loading="loading" @click="submitQuery">
         {{ loading ? '处理中...' : '发送请求' }}
       </button>
     </view>
@@ -30,10 +30,10 @@
       <view class="action-line"><text>数量</text><text>× {{ cartPendingAction.quantity }}</text></view>
       <view class="action-line"><text>单价</text><text>¥{{ cartPendingAction.unitPrice.toFixed(2) }}</text></view>
       <view class="action-line total-line"><text>合计</text><text class="price">¥{{ cartPendingAction.totalPrice.toFixed(2) }}</text></view>
-      <button class="primary-button" :disabled="loading || confirming || submittingOrder" :loading="confirming" @click="confirmAction">
+      <button class="primary-button" :disabled="loading || confirming || submittingOrder || orderOutcomeUnknown" :loading="confirming" @click="confirmAction">
         {{ confirming ? '正在确认菜品...' : '确认加入购物车' }}
       </button>
-      <button class="cancel-button" :disabled="loading || confirming || submittingOrder" @click="cancelAction">取消</button>
+      <button class="cancel-button" :disabled="loading || confirming || submittingOrder || orderOutcomeUnknown" @click="cancelAction">取消</button>
     </view>
 
     <view v-if="actionStatus" class="card"
@@ -46,7 +46,7 @@
       <view class="section-title">当前购物车</view>
       <view class="muted">{{ cartItemCount > 0 ? `共 ${cartItemCount} 件商品` : '购物车为空' }}</view>
       <button class="primary-button checkout-button"
-        :disabled="cartItemCount === 0 || loading || confirming || orderPreviewLoading || submittingOrder"
+        :disabled="cartItemCount === 0 || loading || confirming || orderPreviewLoading || submittingOrder || orderOutcomeUnknown"
         :loading="orderPreviewLoading" @click="generateOrderPreview">
         {{ orderPreviewLoading ? '正在生成...' : '生成订单预览' }}
       </button>
@@ -60,13 +60,17 @@
       </view>
       <view class="action-line"><text>商品总数量</text><text>{{ orderPendingAction.totalQuantity }} 件</text></view>
       <view class="action-line total-line"><text>合计</text><text class="price">¥{{ orderPendingAction.totalPrice.toFixed(2) }}</text></view>
-      <view class="proposal-tip muted">{{ orderProposalConfirmed ? '订单信息已确认。请再次明确确认后创建订单。' : '先确认当前预览信息，再进行最终下单。' }}</view>
+      <view class="proposal-tip muted">{{ orderOutcomeUnknown
+        ? '正在重试之前已经确认的订单内容；当前购物车变化不会改变这次重试。'
+        : (orderProposalConfirmed ? '订单信息已确认。请再次明确确认后创建订单。' : '先确认当前预览信息，再进行最终下单。') }}</view>
       <button v-if="!orderProposalConfirmed" class="primary-button"
-        :disabled="loading || confirming || orderPreviewLoading || submittingOrder"
+        :disabled="loading || confirming || orderPreviewLoading || submittingOrder || orderOutcomeUnknown"
         @click="confirmOrderProposal">确认订单信息</button>
       <button v-else class="primary-button" :disabled="submittingOrder" :loading="submittingOrder"
-        @click="submitConfirmedOrder">{{ submittingOrder ? '正在创建订单...' : '确认下单' }}</button>
-      <button class="cancel-button" :disabled="loading || confirming || orderPreviewLoading || submittingOrder"
+        @click="submitConfirmedOrder">{{ submittingOrder
+          ? (orderOutcomeUnknown ? '正在确认订单结果...' : '正在创建订单...')
+          : (orderOutcomeUnknown ? '重试确认下单' : '确认下单') }}</button>
+      <button v-if="!orderOutcomeUnknown" class="cancel-button" :disabled="loading || confirming || orderPreviewLoading || submittingOrder"
         @click="cancelOrderProposal">取消</button>
     </view>
 
@@ -83,7 +87,7 @@
 import { computed, ref } from 'vue'
 import { runOrderingAgent, executePendingCartAction } from '../../services/agent'
 import { getDishes } from '../../services/menu'
-import { createConfirmedOrder, isSameCartSnapshot, previewOrder } from '../../services/orders'
+import { buildConfirmedOrderSubmission, createConfirmedOrder, generateOrderRequestId, isSameCartSnapshot, previewOrder } from '../../services/orders'
 import { useCartStore } from '../../stores/cart'
 
 const cartStore = useCartStore()
@@ -103,6 +107,9 @@ const orderStatus = ref('')
 const orderStatusType = ref('')
 const submittingOrder = ref(false)
 const createdOrderNo = ref('')
+const orderRequestId = ref(null)
+const orderSubmissionPayload = ref(null)
+const orderOutcomeUnknown = ref(false)
 const cartItems = computed(() => Array.isArray(cartStore.items) ? cartStore.items : [])
 const cartItemCount = computed(() => cartItems.value.reduce((sum, item) => sum + item.quantity, 0))
 const queryLength = computed(() => Array.from(query.value).length)
@@ -124,14 +131,18 @@ function clearOrderProposal() {
   orderPendingAction.value = null
   orderCartSnapshot.value = []
   orderProposalConfirmed.value = false
+  orderRequestId.value = null
+  orderSubmissionPayload.value = null
+  orderOutcomeUnknown.value = false
 }
 
 function fillExample(example) {
-  if (!loading.value && !confirming.value && !orderPreviewLoading.value && !submittingOrder.value) query.value = example
+  if (!loading.value && !confirming.value && !orderPreviewLoading.value && !submittingOrder.value &&
+      !orderOutcomeUnknown.value) query.value = example
 }
 
 async function submitQuery() {
-  if (loading.value || confirming.value || orderPreviewLoading.value || submittingOrder.value) return
+  if (loading.value || confirming.value || orderPreviewLoading.value || submittingOrder.value || orderOutcomeUnknown.value) return
   // 新请求先让旧提案失效，避免把旧动作绑定到新的用户输入。
   clearPreviousResult()
   loading.value = true
@@ -147,7 +158,7 @@ async function submitQuery() {
 }
 
 async function confirmAction() {
-  if (loading.value || confirming.value || submittingOrder.value || !cartPendingAction.value) return
+  if (loading.value || confirming.value || submittingOrder.value || orderOutcomeUnknown.value || !cartPendingAction.value) return
   confirming.value = true // 必须在第一个await之前设置，阻止双击执行两次。
   actionStatus.value = ''
   actionStatusType.value = ''
@@ -170,14 +181,15 @@ async function confirmAction() {
 }
 
 function cancelAction() {
-  if (loading.value || confirming.value || submittingOrder.value || !cartPendingAction.value) return
+  if (loading.value || confirming.value || submittingOrder.value || orderOutcomeUnknown.value || !cartPendingAction.value) return
   cartPendingAction.value = null
   actionStatus.value = '已取消。'
   actionStatusType.value = 'cancelled'
 }
 
 async function generateOrderPreview() {
-  if (loading.value || confirming.value || orderPreviewLoading.value || submittingOrder.value || cartItemCount.value === 0) return
+  if (loading.value || confirming.value || orderPreviewLoading.value || submittingOrder.value ||
+      orderOutcomeUnknown.value || cartItemCount.value === 0) return
   clearOrderProposal()
   orderStatus.value = ''
   orderStatusType.value = ''
@@ -212,7 +224,8 @@ function confirmOrderProposal() {
 }
 
 function cancelOrderProposal() {
-  if (loading.value || confirming.value || orderPreviewLoading.value || submittingOrder.value || !orderPendingAction.value) return
+  if (loading.value || confirming.value || orderPreviewLoading.value || submittingOrder.value ||
+      orderOutcomeUnknown.value || !orderPendingAction.value) return
   clearOrderProposal()
   orderStatus.value = '已取消订单预览。'
   orderStatusType.value = 'cancelled'
@@ -221,8 +234,8 @@ function cancelOrderProposal() {
 async function submitConfirmedOrder() {
   if (loading.value || confirming.value || orderPreviewLoading.value || submittingOrder.value ||
       !orderPendingAction.value || !orderProposalConfirmed.value) return
-  // 最终写入前再次比较当前购物车，旧Preview不能用于已变化的Cart。
-  if (!isSameCartSnapshot(cartItems.value, orderCartSnapshot.value)) {
+  // 只在第一次提交前重读Cart。结果未知后的重试必须复用已经冻结的旧订单意图。
+  if (!orderSubmissionPayload.value && !isSameCartSnapshot(cartItems.value, orderCartSnapshot.value)) {
     clearOrderProposal()
     orderStatus.value = '购物车已发生变化，请重新生成订单预览。'
     orderStatusType.value = 'error'
@@ -233,7 +246,16 @@ async function submitConfirmedOrder() {
   orderStatus.value = ''
   orderStatusType.value = ''
   try {
-    const created = await createConfirmedOrder(cartItems.value, orderPendingAction.value, '')
+    if (!orderSubmissionPayload.value) {
+      orderRequestId.value = generateOrderRequestId()
+      orderSubmissionPayload.value = buildConfirmedOrderSubmission(
+        cartItems.value,
+        orderPendingAction.value,
+        '',
+        orderRequestId.value
+      )
+    }
+    const created = await createConfirmedOrder(orderSubmissionPayload.value)
     // 只有服务端确认已经持久化成功后，才通过现有Store API清空购物车。
     cartStore.clearCart()
     clearOrderProposal()
@@ -241,8 +263,14 @@ async function submitConfirmedOrder() {
     orderStatus.value = '下单成功'
     orderStatusType.value = 'success'
   } catch (error) {
-    if (error.invalidateProposal) clearOrderProposal()
-    orderStatus.value = error.message
+    if (error.invalidateProposal) {
+      clearOrderProposal()
+      orderStatus.value = error.message
+    } else {
+      // 网络中断或通用创建失败可能发生在服务端写入之后，因此保留同一requestId与冻结payload。
+      orderOutcomeUnknown.value = true
+      orderStatus.value = '订单结果暂未确认，请重试确认。重试不会重复创建同一订单。'
+    }
     orderStatusType.value = 'error'
   } finally {
     submittingOrder.value = false

@@ -83,7 +83,9 @@ Preview与Create共享items校验、重复dishId拒绝、实时菜品查询、�
 
 V5.5C增加独立最终按钮和 `createConfirmedOrder()`。服务器在同一次请求中重新计价，以dishId Map逐项比较quantity、unitPrice、lineTotal及汇总金额，一致后才调用共享持久化helper。成功后前端才清空Cart；失败保留Cart。**Confirmed order execution has been validated in the WeChat mini-program and the real uniCloud orders collection.** 真实成功场景持久化了柠檬茶两杯、总价24元、状态 `pending` 的订单，页面与数据库订单号均为 `OD1790357975859B4A2B5`；价格变化与最终售罄场景均拒绝写入、保留Cart并让旧Proposal失效。V5.5C真实验收时只有客户端防双击；当前仍没有库存事务或serializable transaction。
 
-V5.6A为 `createConfirmedOrder()` 增加可选requestId与规范化SHA-256 fingerprint，并在orders配置 `request_id_unique` 稀疏唯一索引。同键同意图返回首次订单，同键不同意图返回 `ORDER_IDEMPOTENCY_CONFLICT`；并发insert冲突后必须精确查询requestId并核对clientId/fingerprint，不能把任意duplicate错误当成重放。历史订单缺少这两个可选字段，无需迁移。真实控制台已确认 `_id_`、`client_time_desc`、`order_no_unique`、`request_id_unique` 同时存在，requestId索引为升序、unique和sparse；同键同payload重试返回相同orderNo且不增加第二条记录，不同意图真实返回冲突错误。**Server-side order idempotency has been validated against the real uniCloud orders collection with a unique sparse requestId index.** 微信前端在V5.6B之前仍不发送requestId。
+V5.6A为 `createConfirmedOrder()` 增加可选requestId与规范化SHA-256 fingerprint，并在orders配置 `request_id_unique` 稀疏唯一索引。同键同意图返回首次订单，同键不同意图返回 `ORDER_IDEMPOTENCY_CONFLICT`；并发insert冲突后必须精确查询requestId并核对clientId/fingerprint，不能把任意duplicate错误当成重放。历史订单缺少这两个可选字段，无需迁移。真实控制台已确认 `_id_`、`client_time_desc`、`order_no_unique`、`request_id_unique` 同时存在，requestId索引为升序、unique和sparse；同键同payload重试返回相同orderNo且不增加第二条记录，不同意图真实返回冲突错误。
+
+V5.6B把该能力接入正式微信Checkout：Preview和信息确认阶段不生成key；第一次最终确认时生成一次 `ord-...` requestId，并冻结requestId、clientId、items、expectedPreview与remark。成功或服务端Replay成功后，前端显示orderNo、清Cart并清除提交状态；明确业务失败保留Cart但清除旧意图；结果未知时保留Cart、Proposal、key和冻结payload，显式重试同一内容。真实微信创建的验收订单在orders集合中具有非空requestId与requestFingerprint，并保持 `totalPrice=24`、`totalCount=2`、`status=pending`。**Server-side idempotent order creation has been integrated into and validated through the real WeChat checkout flow.** 当前恢复只覆盖页面生命周期，不包含刷新或小程序重启后的持久恢复，也不等于exactly-once分布式事务、支付幂等、分布式锁或全局事务隔离。
 
 ## 4. AI推荐、RAG与Agent分工
 

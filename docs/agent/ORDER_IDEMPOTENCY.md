@@ -6,7 +6,7 @@ V5.6A已经完成服务端幂等基础，并通过真实uniCloud订单集合和�
 
 **Server-side order idempotency has been validated against the real uniCloud orders collection with a unique sparse requestId index.**
 
-本阶段只扩展 `orders.createConfirmedOrder()`。微信前端尚未生成或复用requestId，这属于V5.6B；没有修改Agent、购物车UI、支付或库存逻辑。
+V5.6A扩展了 `orders.createConfirmedOrder()` 的服务端幂等能力。V5.6B已经把requestId接入微信正式Checkout，并完成真实微信小程序与uniCloud orders集合验收。本次前端接入没有修改Agent后端、支付、库存逻辑或服务端幂等实现。
 
 ## 为什么UI防双击不够
 
@@ -119,7 +119,99 @@ ORDER_IDEMPOTENCY_CONFLICT
 - legacy `createOrder()`：调用方式、订单快照和返回结构不变，不保存幂等字段。
 - 历史orders：不要求迁移，列表读取不暴露新增内部字段。
 - V5.5C：价格变化仍返回 `ORDER_CONFIRMATION_STALE`，售罄仍返回 `ORDER_DISH_UNAVAILABLE`。
-- 当前前端：尚未传requestId，因此真实微信流程仍要等V5.6B才会使用这项能力。
+- 当前前端：第一次最终确认下单时生成requestId并冻结完整submission payload；结果未知后的重试复用同一requestId和同一payload。
+
+## V5.6B前端生命周期
+
+```text
+Final Order Confirmation
+ → Generate requestId once
+ → Freeze requestId / clientId / items / expectedPreview / remark
+ → orders.createConfirmedOrder()
+
+Success or idempotent replay
+ → show orderNo
+ → clear Pinia Cart
+ → clear Proposal / requestId / frozen payload
+
+Outcome unknown
+ → keep Cart / Proposal / confirmation / requestId / frozen payload
+ → explicit retry with the same payload
+ → server returns the original order when the first write already succeeded
+```
+
+requestId只在用户第一次点击最终“确认下单”时生成。Preview和“确认订单信息”阶段不会提前占用key。生成格式为 `ord-<base36 timestamp>-<three random segments>`，只使用服务端允许的字符并满足8～128字符限制；它用于降低订单意图ID碰撞概率，不是加密令牌、授权信息或orderNo，也不显示在UI和日志中。
+
+第一次提交同时冻结以下安全结构：
+
+```json
+{
+  "requestId": "ord-...",
+  "clientId": "anon-...",
+  "items": [{ "dishId": "dish-4", "quantity": 2 }],
+  "expectedPreview": {
+    "items": [{ "dishId": "dish-4", "quantity": 2, "unitPrice": 12, "lineTotal": 24 }],
+    "totalQuantity": 2,
+    "totalPrice": 24
+  },
+  "remark": ""
+}
+```
+
+冻结expectedPreview不会让客户端价格成为订单事实。服务端仍会重新读取菜品状态和价格，并比较用户确认的预期。冻结的目的只是保证同一requestId的每次重试具有同一request fingerprint。
+
+### 明确失败与结果未知
+
+以下安全业务错误明确使旧Proposal失效：`ORDER_CONFIRMATION_STALE`、`ORDER_DISH_UNAVAILABLE`、`ORDER_DISH_NOT_FOUND`、`ORDER_ITEMS_INVALID`、`ORDER_IDEMPOTENCY_CONFLICT`、`ORDER_REQUEST_ID_INVALID`。页面保留Cart，清除Proposal、确认状态、requestId与冻结payload，并要求重新预览。
+
+网络中断、timeout、transport错误及通用 `ORDER_CREATE_FAILED` 可能发生在服务端已经写入之后，因此按结果未知处理。页面保留Cart和全部订单意图状态，显示“重试确认下单”，并且只允许用原冻结payload重试。此时页面阻止新Agent Query、新Preview和本地取消，避免让用户误以为订单一定没有创建；若其他Tab修改Cart，重试仍对应之前已经确认的订单意图。
+
+### 当前恢复边界
+
+V5.6B只提供当前Agent页面生命周期内的安全重试。页面刷新、小程序重启或页面状态被销毁后，未决requestId和冻结payload不会恢复；当前没有localStorage持久化提交恢复。该限制不影响服务端已建立的唯一约束，但客户端此时无法自动找回旧key，后续需要独立设计persistent submission recovery。
+
+## V5.6B真实微信主链验收
+
+正式微信Checkout已经按以下链路完成真实验收：
+
+```text
+Pinia Cart
+ → Server Order Preview
+ → 确认订单信息
+ → Final Explicit Order Confirmation
+ → Generate requestId Once
+ → Freeze Submission Payload
+ → orders.createConfirmedOrder()
+ → Canonical Fingerprint
+ → Fresh Server Validation / Pricing
+ → Expected Preview Comparison
+ → Persist Order
+ → request_id_unique UNIQUE sparse index
+ → Server Success
+ → Cart Clear
+```
+
+通过正式微信流程创建的最新验收订单在真实uniCloud `orders` 集合中满足：
+
+- requestId存在且非空，格式为 `ord-...`。
+- requestFingerprint存在且非空。
+- `totalPrice=24`。
+- `totalCount=2`。
+- `status=pending`。
+
+文档不记录完整requestId或requestFingerprint。上述字段证明V5.6B正式前端已经把V5.6A服务端幂等能力接入真实用户订单主链。
+
+本次微信验收没有人为制造“服务端成功但响应丢失”。Retry证据由三部分组成：V5.6A真实uniCloud admin验证同key同payload返回同一orderNo且不新增记录；V5.6B自动化测试验证结果未知时保留key和冻结payload并原样重试；真实微信订单则验证正式Checkout确实写入了非空requestId与requestFingerprint。
+
+结果未知时的完整恢复路径为：
+
+```text
+Keep requestId / Cart / Proposal / Frozen Payload
+ → Retry Same Frozen Payload
+ → Server Replay
+ → Return Same Persisted Order
+ → No Duplicate Order
+```
 
 ## 真实uniCloud验收
 
@@ -188,4 +280,4 @@ requestId只能表示同一次订单创建意图，不能复用于不同payload�
 3. 保持requestId不变，同时把quantity及expectedPreview改成一致的另一组值：应返回 `ORDER_IDEMPOTENCY_CONFLICT`，数量不变。
 4. 并发安全主要由自动化并发测试和数据库unique约束证明；本阶段不要求在真实云端做压力测试。
 
-不要提交本地 `*.param.json`。V5.6A只提供服务器能力；微信正式Checkout生成并复用requestId属于V5.6B。本阶段没有支付或Agent Order Tool。
+不要提交本地 `*.param.json`。V5.6B正式Checkout已经生成并复用requestId，并完成真实微信订单主链验收。本阶段没有支付、持久化恢复或Agent Order Tool。

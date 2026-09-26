@@ -5,6 +5,10 @@ const MAX_ITEM_QUANTITY = 99
 const PREVIEW_KEYS = ['items', 'requiresConfirmation', 'totalPrice', 'totalQuantity']
 const PREVIEW_ITEM_KEYS = ['dishId', 'lineTotal', 'name', 'quantity', 'unitPrice']
 const ORDER_ACTION_KEYS = ['items', 'requiresConfirmation', 'totalPrice', 'totalQuantity', 'type']
+const ORDER_SUBMISSION_KEYS = ['clientId', 'expectedPreview', 'items', 'remark', 'requestId']
+const ORDER_SUBMISSION_ITEM_KEYS = ['dishId', 'quantity']
+const EXPECTED_PREVIEW_KEYS = ['items', 'totalPrice', 'totalQuantity']
+const EXPECTED_PREVIEW_ITEM_KEYS = ['dishId', 'lineTotal', 'quantity', 'unitPrice']
 const CREATED_ORDER_KEYS = ['_id', 'clientId', 'createTime', 'items', 'orderNo', 'remark', 'status', 'totalCount', 'totalPrice']
 const CREATED_ORDER_ITEM_KEYS = ['dishId', 'name', 'price', 'quantity', 'subtotal']
 const PREVIEW_ERROR_MESSAGES = Object.freeze({
@@ -18,8 +22,18 @@ const CREATE_ERROR_MESSAGES = Object.freeze({
   ORDER_DISH_NOT_FOUND: '购物车中有菜品已下架，请重新生成预览。',
   ORDER_DISH_UNAVAILABLE: '购物车中有菜品当前不可用，请重新生成预览。',
   ORDER_CONFIRMATION_STALE: '订单信息已变化，请重新生成预览并确认。',
+  ORDER_IDEMPOTENCY_CONFLICT: '订单请求与已提交内容冲突，请重新生成预览。',
+  ORDER_REQUEST_ID_INVALID: '订单请求标识无效，请重新生成预览。',
   ORDER_CREATE_FAILED: '暂时无法创建订单，请稍后重试。'
 })
+const DEFINITIVE_CREATE_ERROR_CODES = Object.freeze([
+  'ORDER_ITEMS_INVALID',
+  'ORDER_DISH_NOT_FOUND',
+  'ORDER_DISH_UNAVAILABLE',
+  'ORDER_CONFIRMATION_STALE',
+  'ORDER_IDEMPOTENCY_CONFLICT',
+  'ORDER_REQUEST_ID_INVALID'
+])
 
 function createPreviewError(errCode = 'ORDER_PREVIEW_FAILED') {
   const safeCode = Object.hasOwn(PREVIEW_ERROR_MESSAGES, errCode) ? errCode : 'ORDER_PREVIEW_FAILED'
@@ -37,8 +51,8 @@ function createOrderError(errCode = 'ORDER_CREATE_FAILED') {
   const safeCode = Object.hasOwn(CREATE_ERROR_MESSAGES, errCode) ? errCode : 'ORDER_CREATE_FAILED'
   const error = new Error(CREATE_ERROR_MESSAGES[safeCode])
   error.errCode = safeCode
-  error.invalidateProposal = ['ORDER_ITEMS_INVALID', 'ORDER_DISH_NOT_FOUND',
-    'ORDER_DISH_UNAVAILABLE', 'ORDER_CONFIRMATION_STALE'].includes(safeCode)
+  error.invalidateProposal = DEFINITIVE_CREATE_ERROR_CODES.includes(safeCode)
+  error.outcomeUnknown = !error.invalidateProposal
   return error
 }
 
@@ -169,6 +183,96 @@ export function buildExpectedPreview(orderPendingAction) {
   return { items, totalQuantity, totalPrice: totalCents / 100 }
 }
 
+function normalizeRequestId(value) {
+  if (typeof value !== 'string') throw createOrderError('ORDER_REQUEST_ID_INVALID')
+  const requestId = value.trim()
+  if (requestId.length < 8 || requestId.length > 128 || !/^[A-Za-z0-9_-]+$/.test(requestId)) {
+    throw createOrderError('ORDER_REQUEST_ID_INVALID')
+  }
+  return requestId
+}
+
+// requestId只标识一次订单创建意图，不是登录凭证或加密令牌。
+// 时间戳配合三段随机值可降低页面生命周期内的碰撞概率，并兼容微信小程序运行环境。
+export function generateOrderRequestId(now = Date.now(), random = Math.random) {
+  if (!Number.isSafeInteger(now) || now < 0 || typeof random !== 'function') {
+    throw createOrderError('ORDER_REQUEST_ID_INVALID')
+  }
+  const randomParts = []
+  for (let index = 0; index < 3; index += 1) {
+    const value = random()
+    if (typeof value !== 'number' || !Number.isFinite(value) || value < 0 || value >= 1) {
+      throw createOrderError('ORDER_REQUEST_ID_INVALID')
+    }
+    randomParts.push(Math.floor(value * 0x100000000).toString(36).padStart(7, '0'))
+  }
+  return normalizeRequestId(`ord-${now.toString(36)}-${randomParts.join('')}`)
+}
+
+function freezeSubmissionPayload(payload) {
+  payload.items.forEach(Object.freeze)
+  payload.expectedPreview.items.forEach(Object.freeze)
+  Object.freeze(payload.items)
+  Object.freeze(payload.expectedPreview.items)
+  Object.freeze(payload.expectedPreview)
+  return Object.freeze(payload)
+}
+
+// 第一次最终提交时同时固定requestId与完整payload。结果未知后的重试必须复用这份内容，
+// 避免Cart变化导致同一个requestId对应不同fingerprint。
+export function buildConfirmedOrderSubmission(cartItems, orderPendingAction, remark = '', requestId) {
+  const items = buildOrderPreviewItems(cartItems)
+  const expectedPreview = buildExpectedPreview(orderPendingAction)
+  if (typeof remark !== 'string' || remark.length > 200) throw createOrderError('ORDER_ITEMS_INVALID')
+  return freezeSubmissionPayload({
+    requestId: normalizeRequestId(requestId),
+    clientId: getClientId(),
+    items: items.map(item => ({ ...item })),
+    expectedPreview: {
+      items: expectedPreview.items.map(item => ({ ...item })),
+      totalQuantity: expectedPreview.totalQuantity,
+      totalPrice: expectedPreview.totalPrice
+    },
+    remark
+  })
+}
+
+function validateConfirmedOrderSubmission(value) {
+  // 重试时不重新读取本地clientId，确保使用第一次提交时冻结的同一身份字段。
+  if (!hasExactKeys(value, ORDER_SUBMISSION_KEYS) || typeof value.clientId !== 'string' ||
+      !/^anon-[a-z0-9-]{16,80}$/.test(value.clientId) ||
+      typeof value.remark !== 'string' || value.remark.length > 200) {
+    throw createOrderError('ORDER_ITEMS_INVALID')
+  }
+  const requestId = normalizeRequestId(value.requestId)
+  if (!Array.isArray(value.items) || value.items.some(item => !hasExactKeys(item, ORDER_SUBMISSION_ITEM_KEYS)) ||
+      !hasExactKeys(value.expectedPreview, EXPECTED_PREVIEW_KEYS) ||
+      !Array.isArray(value.expectedPreview.items) ||
+      value.expectedPreview.items.some(item => !hasExactKeys(item, EXPECTED_PREVIEW_ITEM_KEYS))) {
+    throw createOrderError('ORDER_ITEMS_INVALID')
+  }
+  const items = buildOrderPreviewItems(value.items.map(item => ({ id: item?.dishId, quantity: item?.quantity })))
+  const expectedPreview = buildExpectedPreview({
+    type: 'create_order',
+    requiresConfirmation: true,
+    items: value.expectedPreview.items.map(item => ({
+      dishId: item?.dishId,
+      name: '_',
+      quantity: item?.quantity,
+      unitPrice: item?.unitPrice,
+      lineTotal: item?.lineTotal
+    })),
+    totalQuantity: value.expectedPreview.totalQuantity,
+    totalPrice: value.expectedPreview.totalPrice
+  })
+  if (items.length !== expectedPreview.items.length ||
+      !items.every(item => expectedPreview.items.some(expected =>
+        expected.dishId === item.dishId && expected.quantity === item.quantity))) {
+    throw createOrderError('ORDER_ITEMS_INVALID')
+  }
+  return { requestId, clientId: value.clientId, items, expectedPreview, remark: value.remark }
+}
+
 function validateCreatedOrderResponse(response, expectedPreview, clientId, remark) {
   const order = response?.order
   if (!hasExactKeys(response, ['errCode', 'order']) || response.errCode !== 0 ||
@@ -222,16 +326,20 @@ export async function previewOrder(cartItems) {
   }
 }
 
-export async function createConfirmedOrder(cartItems, orderPendingAction, remark = '') {
-  const items = buildOrderPreviewItems(cartItems)
-  const expectedPreview = buildExpectedPreview(orderPendingAction)
-  if (typeof remark !== 'string' || remark.length > 200) throw createOrderError('ORDER_ITEMS_INVALID')
-  const clientId = getClientId()
+export async function createConfirmedOrder(submissionOrCartItems, orderPendingAction, remark = '') {
+  // 保留V5.5C旧调用兼容；V5.6B正式页面传入已冻结且包含requestId的submission payload。
+  const submission = Array.isArray(submissionOrCartItems)
+    ? { clientId: getClientId(), items: buildOrderPreviewItems(submissionOrCartItems),
+        expectedPreview: buildExpectedPreview(orderPendingAction), remark }
+    : validateConfirmedOrderSubmission(submissionOrCartItems)
+  if (typeof submission.remark !== 'string' || submission.remark.length > 200) {
+    throw createOrderError('ORDER_ITEMS_INVALID')
+  }
   try {
     const orders = uniCloud.importObject('orders', { customUI: true })
-    const response = await orders.createConfirmedOrder({ clientId, items, expectedPreview, remark })
+    const response = await orders.createConfirmedOrder(submission)
     if (response?.errCode !== 0) throw createOrderError(readErrorCode(response))
-    return validateCreatedOrderResponse(response, expectedPreview, clientId, remark)
+    return validateCreatedOrderResponse(response, submission.expectedPreview, submission.clientId, submission.remark)
   } catch (error) {
     throw createOrderError(readErrorCode(error))
   }
