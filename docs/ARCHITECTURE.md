@@ -12,8 +12,9 @@ RAG 与 Agent 当前没有互相调用；`rag.answer()` 没有注册为 Agent To
 
 V7.1A 在现有系统旁新增独立的 Python FastAPI + LangChain 框架服务。它通过
 `MenuGateway` 端口隔离菜单来源，并使用测试 fixture 完成离线编排验证。V7.1B-2 的正式
-`UniCloudHttpMenuGateway` 已完成真实 uniCloud 只读接入验收；真实 Qwen 与微信端仍未接入
-这条 Python 链路。该服务不拥有数据库或交易职责，也没有显式自定义 LangGraph 流程。
+`UniCloudHttpMenuGateway` 已完成真实 uniCloud 只读接入验收。V7.1C 又完成真实 Qwen、
+LangChain `create_agent`、Structured Tools、Gateway 和真实菜单数据的端到端验收；微信端仍未
+接入这条 Python 链路。该服务不拥有数据库或交易职责，也没有显式自定义 LangGraph 流程。
 
 V7.1B-1 已把 Native Agent 的三个只读菜单能力抽取到 uniCloud Shared Menu Domain，并让
 Native Agent 与经过 HMAC-SHA256 认证的 URL 化 Framework Gateway 复用同一实现。Shared
@@ -44,7 +45,7 @@ graph TB
     AG[Ordering Agent<br/>Native Function Calling]
   end
 
-  subgraph FutureFramework[V7 Independent Framework Service - local foundation]
+  subgraph FutureFramework[V7 Independent Python Framework Service]
     FASTAPI[Python 3.11 + FastAPI]
     LC[LangChain create_agent]
     GW[MenuGateway Port]
@@ -112,8 +113,10 @@ Python LangChain Service ── MenuGateway ── UniCloudHttpMenuGateway
         └──────────────────── HTTPS + HMAC ── Framework Gateway
 ```
 
-Python Adapter 与协议已经实现并完成真实 Gateway 验收。验收脚本没有进入 LangChain 或
-调用 Qwen，所以该结果只证明 Python HTTP Adapter 的只读链路，不代表真实模型 E2E 已完成。
+Python Adapter 与协议已完成真实 Gateway 验收。V7.1C 进一步通过本地受控验收脚本调用真实
+Qwen：`search_menu` 返回空结果后，模型在下一次决策调用 `list_available_drinks`，形成
+`call → result → call → result`。这证明该案例中的 Tool-result-driven sequential replanning，
+不代表所有请求都具有通用自治规划保证。
 
 ### Client Layer
 

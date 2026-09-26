@@ -49,6 +49,12 @@ async def test_case_a_real_langchain_loop_calls_search_then_drinks() -> None:
     result = await agent.run("有可乐吗？没有的话推荐点别的喝的。", include_trace=True)
 
     assert observed_zero_result is True
+    assert [(entry["type"], entry["toolName"]) for entry in result.trace] == [
+        ("tool_call", "search_menu"),
+        ("tool_result", "search_menu"),
+        ("tool_call", "list_available_drinks"),
+        ("tool_result", "list_available_drinks"),
+    ]
     assert [entry["toolName"] for entry in result.trace if entry["type"] == "tool_call"] == [
         "search_menu",
         "list_available_drinks",

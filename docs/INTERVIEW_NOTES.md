@@ -2,7 +2,7 @@
 
 ## 30 秒项目介绍
 
-我用 Vue 3、uni-app、Pinia 和 uniCloud 做了一个微信智能点餐项目。除了菜单、购物车和云端订单闭环，还实现了两项独立的智能能力：Evidence-first RAG 菜单问答，以及基于 Qwen 原生 Function Calling 的多步 Ordering Agent。模型负责开放式理解、证据或工具选择；价格、状态、副作用、订单确认和幂等由服务器与用户确认控制。项目冻结时 747 项自动化测试通过，并完成真实微信端和 uniCloud 验收。
+我用 Vue 3、uni-app、Pinia 和 uniCloud 做了一个微信智能点餐项目。除了菜单、购物车和云端订单闭环，还实现了 Evidence-first RAG、原生 Function Calling Ordering Agent，以及独立的 Python + FastAPI + LangChain 只读菜单 Agent。模型负责开放式理解、证据或工具选择；价格、状态、副作用、订单确认和幂等由服务器与用户确认控制。当前 JS 808 项、Python 97 项自动化测试通过，并完成真实微信端、uniCloud 与 Qwen/LangChain 端到端验收。
 
 ## 90 秒项目介绍
 
@@ -11,6 +11,11 @@
 RAG 使用 21 条人工审核知识、512 维 Embedding 和 Exact Cosine Top-3。真实测试中，模型曾在证据之外加入“解腻”，也曾把“柠檬香气”扩写成“清爽的柠檬香气”。所以我把信任边界改为 Evidence-first：模型只选择 `answerable`、dishIds 和 knowledgeIds，服务器验证后直接用可信证据原文生成答案。12 条固定云端评测中，Answerability 为 11/12，Server Grounding 为 12/12。
 
 Ordering Agent 使用原生 Function Calling、Tool Registry、Executor allowlist 和参数 Schema。真实案例中，模型先搜索可乐得到空结果，再自主调用在售饮料工具返回柠檬茶，这个第二步不是代码写死。写操作则采用 Proposal → 服务端校验 → 用户确认：LLM 不能直接修改购物车。订单还实现 Preview 后再次校价、旧确认拒绝，以及 requestId、请求指纹和数据库唯一索引共同构成的幂等重试。
+
+独立的 Python Framework Agent 使用 LangChain `create_agent` 和三个只读 Structured Tools，
+通过 HMAC Gateway 读取相同的真实菜单。最终真实 trace 为
+`search_menu → result(count=0) → list_available_drinks → result`，证明该案例中 Qwen 根据
+Tool Result 做了下一次模型决策；它没有购物车或订单 Tool，也没有接入微信 UI。
 
 ## 3 分钟项目介绍
 
@@ -29,6 +34,13 @@ Ordering Agent 使用原生 Function Calling、Tool Registry、Executor allowlis
 Agent 与 RAG 独立。Agent 使用 Qwen3.8-Flash 原生 Function Calling，Registry 定义四个工具，Executor 做 allowlist、Schema 校验与静态实现映射。模型每轮接收 Tool Result，再决定继续调用或结束，因此“可乐搜索为空后查在售饮料”属于真实多步循环。
 
 对副作用，我没有给模型任意 Store 或订单写权限。`prepare_add_to_cart` 只返回 Pending Action；用户确认时客户端重新读取菜单，确认菜品仍存在、在售且价格未变化，才调用 Pinia mutation。
+
+V7 还增加了一条独立 Python LangChain 只读链路。较早一次真实验收中，Qwen 在同一个
+`AIMessage` 预先发出 `search_menu` 和 `list_available_drinks`，trace 是
+`call → call → result → result`，所以我没有把它描述成 sequential replanning。随后只增加
+通用 Prompt 约束，要求 `search → wait Tool Result → consider fallback`，没有写
+`if count == 0` fallback。最终重测得到 `call → result → call → result`，才把该案例记录为
+Tool-result-driven sequential replanning。
 
 ### 4. 订单与幂等
 
@@ -99,6 +111,10 @@ RAG 与 Agent 共享真实菜单数据，但当前没有调用关系；`rag.answ
 ### 12. 为什么“可乐”案例属于 multi-step Agent？
 
 第一步 `search_menu("可乐")` 得到 count=0，结果回传模型；模型观察后第二步选择 `list_available_drinks()`，返回在售柠檬茶。服务器没有写死 no-cola fallback。
+
+这里以最终真实 observable trace 的 `call → result → call → result` 为依据。曾有一次运行是
+`call → call → result → result`，两个 Tool Call 来自同一个模型决策，不能证明模型观察了第一
+个结果。保留真实 trace 顺序并区分两者，比只看最终答案更重要。
 
 ### 13. Tool Result 为什么不能直接信模型？
 

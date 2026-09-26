@@ -243,3 +243,34 @@ Python references used for V7.1A:
 
 - LangChain Python Agents: <https://docs.langchain.com/oss/python/langchain/agents>
 - LangChain OpenAI-compatible chat integration: <https://docs.langchain.com/oss/python/integrations/chat/openai>
+
+## V7.1B / V7.1C Real Integration Status
+
+V7.1B added the authenticated `UniCloudHttpMenuGateway` and completed real Python-to-Gateway
+acceptance. V7.1C then completed the controlled real path:
+
+```text
+Qwen3.8-Flash
+ → LangChain create_agent
+ → three read-only Structured Tools
+ → UniCloudHttpMenuGateway
+ → HMAC / HTTPS Framework Gateway
+ → Shared Menu Domain
+ → real uniCloud menu data
+```
+
+The final Case A observable trace was `search_menu("可乐") → ToolMessage count=0 →
+list_available_drinks() → ToolMessage with the current drink → final answer`. The second Tool Call
+came from a later Qwen model decision after the first Tool Result. There is no `if count == 0`
+application fallback.
+
+An earlier real run produced `call → call → result → result`: Qwen had emitted both Tool Calls in
+one `AIMessage`, so that run did not prove replanning. The trace sanitizer was deliberately left in
+message order. A general Prompt rule was added to require `search → wait for Tool Result → consider
+fallback`, and the final real rerun produced `call → result → call → result`. This is evidence for
+Tool-result-driven sequential replanning in that controlled case, not a general autonomous Agent
+guarantee.
+
+LangGraph remains only a transitive runtime dependency of LangChain. The project still has no
+custom `StateGraph`, state, nodes, edges, router, checkpointer, thread memory or conversation
+history. Explicit LangGraph design belongs to V7.2.

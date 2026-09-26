@@ -72,8 +72,10 @@ nonce and signature for every attempt.
 adapter, and has a finite request timeout. Configuration is lazy so app import and health checks
 remain available without secrets.
 
-V7.1A implements but does not call the production adapter. Automated orchestration tests use a
-test-only `BaseChatModel` and make no network requests.
+V7.1A implemented but did not call the production adapter. Automated orchestration tests still use
+a test-only `BaseChatModel` and make no network requests. V7.1C separately completed controlled
+real Qwen acceptance through the production adapter; those calls are manual acceptance, never
+pytest behavior.
 
 ## LangGraph boundary
 
@@ -96,8 +98,19 @@ recursion limit bounds the agent cycle and FastAPI applies an overall 20-second 
 - **V7.1B-2 accepted against real uniCloud:** `UniCloudHttpMenuGateway`, HMAC v1, strict response
   validation, safe errors, MockTransport LangChain integration, and real reads through the
   deployed Gateway for all three operations.
-- Later validate real Qwen + LangChain + `UniCloudHttpMenuGateway` end to end in a controlled
-  environment.
+- Keep the accepted Gateway contract frozen while the framework layer evolves.
+
+### V7.1C
+
+- **Accepted end to end:** real Qwen3.8-Flash, LangChain `create_agent`, three read-only Tools,
+  `UniCloudHttpMenuGateway`, authenticated Gateway, Shared Menu Domain and real uniCloud menu data.
+- In the final Case A trace, Qwen first called `search_menu("可乐")`, observed `count=0`, then made
+  a second model decision to call `list_available_drinks()`. No Python fallback branch or script
+  call supplied the second Tool invocation.
+- The other controlled cases covered one-Tool lookup, zero-Tool greeting, sold-out status,
+  read-only refusal and a basic prompt-injection check.
+- This proves the observed single-turn cases, not a general autonomous-planning or production
+  security guarantee. Automated tests remain fully offline.
 
 ### V7.2
 

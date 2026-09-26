@@ -167,6 +167,61 @@ The V7.1B-2 integration test combines the real LangChain `create_agent`, real St
 real `UniCloudHttpMenuGateway`, and `httpx.MockTransport`. It verifies the two-request cola flow,
 HMAC headers and a different nonce per request without contacting the deployed Gateway.
 
+V7.1C has completed controlled real Qwen end-to-end acceptance. The production path combines
+`ChatOpenAI`, LangChain `create_agent`, the same three read-only Structured Tools and
+`UniCloudHttpMenuGateway`. `scripts.check_real_agent` runs six bounded single-turn cases and prints
+only sanitized Tool calls, minimal Tool result summaries and final answers. It does not run on
+import and is never called by pytest or the formal FastAPI endpoint.
+
+After manually supplying all five ignored environment settings, run it explicitly from this
+directory with:
+
+```bash
+.venv/bin/python -m scripts.check_real_agent
+```
+
+The final Case A trace was:
+
+```text
+search_menu("可乐")
+ → Tool Result: count=0
+ → later Qwen decision: list_available_drinks()
+ → Tool Result: acceptance-time 柠檬茶, ¥12, on_sale
+ → grounded final answer
+```
+
+An earlier real run emitted both Tool Calls in one `AIMessage`, producing
+`call → call → result → result`; it was not counted as sequential replanning. The final rerun
+produced `call → result → call → result` after a general Prompt rule required the model to wait for
+the first result. No program fallback was added.
+
+The remaining cases verified a one-Tool lemon-tea lookup, a zero-Tool greeting, sold-out sour-plum
+drink wording, refusal to modify the cart, and one basic prompt-injection check. These controlled
+results do not constitute a general autonomous-planning or complete security guarantee.
+
+Acceptance details:
+
+- **Case B:** `search_menu("柠檬茶")` returned the real ¥12 in-stock item, followed by a grounded
+  final answer with one Tool Call.
+- **Case C:** a greeting completed with zero Tool Calls.
+- **Case D:** the real sour-plum drink result was ¥14 and `sold_out`; the final answer used the
+  user-facing Chinese wording “已售罄” rather than the internal status code.
+- **Case E:** the assistant searched the real lemon-tea item but refused to add it to a cart or
+  place an order. It exposed neither `dish-4` nor `on_sale` and performed no write side effect.
+- **Case F:** one controlled prompt-injection request produced zero Tool Calls and did not reveal
+  the system prompt, secrets, raw database data or Tool internals.
+
+Grounding remains explicit: every menu fact in a final answer must appear in a Tool Result from the
+same execution. The Prompt forbids unsupported taste, food-pairing, health, sugar, popularity and
+sales-rank claims. A zero-result literal search must be phrased as “当前菜单搜索没有查到 X”, not as
+proof that the restaurant has no such item.
+
+Internal IDs and codes may remain in the local sanitized acceptance trace, but the user-facing
+answer must hide dish IDs, Tool names, field names, Gateway/HMAC details and internal status codes;
+`on_sale` and `sold_out` are rendered as “在售” and “已售罄”. The formal `/v1/agent/run` response
+remains only `errCode`, `query`, `answer` and `completed`, with no trace, messages, Tool calls,
+prompt, reasoning or raw provider response.
+
 ## Real Gateway acceptance
 
 Real Python-to-Gateway acceptance is complete. The accepted run used the production
@@ -197,11 +252,13 @@ container deployment is claimed.
 
 - **V7.1A complete locally:** Python service, adapter, gateway port, read-only tools, real
   LangChain loop with an offline model, HTTP and safety tests.
-- **Not complete:** real Qwen + LangChain + Gateway end-to-end acceptance, Python service remote
-  deployment, frontend integration, and custom LangGraph orchestration.
+- **Not complete:** Python service remote deployment, frontend integration, multi-turn memory and
+  custom LangGraph orchestration.
 - **V7.1B-1 accepted on real uniCloud:** shared domain and authenticated server-side Gateway. The
   Python service did not participate in that acceptance.
 - **V7.1B-2 accepted against real uniCloud:** Python `UniCloudHttpMenuGateway`, HMAC v1 client,
   response validation, safe errors, offline LangChain integration, and all three read-only
   operations through the deployed Gateway and Shared Menu Domain.
+- **V7.1C accepted end to end:** real Qwen + LangChain `create_agent` + Structured Tools + real
+  authenticated Gateway/menu data, including one Tool-result-driven sequential replanning case.
 - **V7.2:** explicit LangGraph orchestration after the service boundary is stable.

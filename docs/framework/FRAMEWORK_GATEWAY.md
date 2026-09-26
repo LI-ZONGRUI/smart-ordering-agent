@@ -302,8 +302,10 @@ The acceptance-time results were:
 - `get_dish_detail("dish-4")`: `found=true`, category `drink`, price 12, `on_sale`, spicy level 0,
   description “清爽柠檬香气，适合搭配正餐。” and ingredients 红茶、柠檬.
 
-These are acceptance-time database facts, not permanent menu assertions. The script did not start
-LangChain or call Qwen, so real Qwen + LangChain + Gateway end-to-end acceptance remains pending.
+These are acceptance-time database facts, not permanent menu assertions. That V7.1B-2 script did
+not start LangChain or call Qwen. V7.1C later completed a separate controlled real Qwen, LangChain
+and Gateway end-to-end acceptance, including a `search_menu` Tool Result followed by a later model
+decision to call `list_available_drinks`; no application fallback supplied that second call.
 
 ## Platform References
 
