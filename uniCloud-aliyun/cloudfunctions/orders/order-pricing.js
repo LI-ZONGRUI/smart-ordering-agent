@@ -189,5 +189,6 @@ module.exports = {
   isOrderBusinessError,
   toSafeOrderBusinessResult,
   validateExpectedPreview,
+  validateOrderItems: validateItems,
   validateAndPriceOrderItems
 }

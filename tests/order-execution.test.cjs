@@ -4,6 +4,7 @@ const fs = require('node:fs')
 const vm = require('node:vm')
 
 const pricing = require('../uniCloud-aliyun/cloudfunctions/orders/order-pricing')
+const idempotency = require('../uniCloud-aliyun/cloudfunctions/orders/order-idempotency')
 const orderSource = fs.readFileSync('uniCloud-aliyun/cloudfunctions/orders/index.obj.js', 'utf8')
 const serviceText = fs.readFileSync('src/services/orders.js', 'utf8')
 const pageText = fs.readFileSync('src/pages/agent/index.vue', 'utf8')
@@ -48,6 +49,7 @@ function loadOrders(options = {}) {
   const sandbox = { module: { exports: {} }, uniCloud: { database: () => data.db }, require(name) {
     if (name === 'crypto') return { randomBytes: () => Buffer.from([1, 2, 3]) }
     if (name === './order-pricing') return pricingModule
+    if (name === './order-idempotency') return idempotency
     throw new Error(`unexpected require ${name}`)
   } }
   vm.runInNewContext(orderSource, sandbox)

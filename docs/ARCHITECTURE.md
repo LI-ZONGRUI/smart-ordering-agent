@@ -16,7 +16,8 @@ WeChat Mini Program
           ├─ menu   → categories、dishes
           ├─ orders → 共享dishes校验/计价
           │            ├─ previewOrder → 只读预览 → STOP
-          │            └─ createOrder → 再次校验 → orders写入/读取
+          │            ├─ createOrder → 再次校验 → orders写入/读取
+          │            └─ createConfirmedOrder → 确认值比较 + 可选requestId幂等 → orders
           ├─ ai     → dishes → Model Studio / qwen3.8-flash
           │                      → 菜品ID校验、实时价格计算
           ├─ rag    → knowledge_chunks + dishes
@@ -42,7 +43,7 @@ Pinia是页面状态层，不是所有网络请求的必经网关。推荐与问
 | --- | --- |
 | categories | 分类ID、名称、排序 |
 | dishes | 菜名、分类、描述、价格、图片、销量、辣度、配料、在售状态等实时菜单事实 |
-| orders | 订单号、菜品快照、数量、金额、备注、状态、clientId、时间 |
+| orders | 订单号、菜品快照、数量、金额、备注、状态、clientId、时间；confirmed路径可选保存requestId和内部fingerprint |
 | knowledge_chunks | 审核知识及来源、contentHash、版本、模型/维度、向量和时间；knowledgeId唯一 |
 
 这些collection不向小程序开放直接读写。调用云对象不等于已实现完善授权：clientId仅为临时匿名隔离，尚无正式登录与用户认证。
@@ -80,7 +81,9 @@ Pinia Cart
 
 Preview与Create共享items校验、重复dishId拒绝、实时菜品查询、在售校验、1～99数量规则和整数分计价；订单最多包含1～30种菜品。Preview是server-validated checkout proposal，不是持久订单、交易、预留、支付意图、授权Token或不可变价格保证。真实验收中，柠檬茶两杯返回总价24元，售罄酸梅汤被 `ORDER_DISH_UNAVAILABLE` 拒绝；检查orders集合未观察到本次Preview创建的新记录。V5.5B前端保存dishId/quantity快照，确认信息时检测购物车变化；确认只改变页面状态。**Checkout proposal flow has been integrated and validated in the WeChat mini-program.**
 
-V5.5C增加独立最终按钮和 `createConfirmedOrder()`。服务器在同一次请求中重新计价，以dishId Map逐项比较quantity、unitPrice、lineTotal及汇总金额，一致后才调用共享持久化helper。成功后前端才清空Cart；失败保留Cart。**Confirmed order execution has been validated in the WeChat mini-program and the real uniCloud orders collection.** 真实成功场景持久化了柠檬茶两杯、总价24元、状态 `pending` 的订单，页面与数据库订单号均为 `OD1790357975859B4A2B5`；价格变化与最终售罄场景均拒绝写入、保留Cart并让旧Proposal失效。当前只有客户端防双击，没有requestId与服务器重试幂等；也没有库存事务或serializable transaction。
+V5.5C增加独立最终按钮和 `createConfirmedOrder()`。服务器在同一次请求中重新计价，以dishId Map逐项比较quantity、unitPrice、lineTotal及汇总金额，一致后才调用共享持久化helper。成功后前端才清空Cart；失败保留Cart。**Confirmed order execution has been validated in the WeChat mini-program and the real uniCloud orders collection.** 真实成功场景持久化了柠檬茶两杯、总价24元、状态 `pending` 的订单，页面与数据库订单号均为 `OD1790357975859B4A2B5`；价格变化与最终售罄场景均拒绝写入、保留Cart并让旧Proposal失效。V5.5C真实验收时只有客户端防双击；当前仍没有库存事务或serializable transaction。
+
+V5.6A为 `createConfirmedOrder()` 增加可选requestId与规范化SHA-256 fingerprint，并在orders配置 `request_id_unique` 稀疏唯一索引。同键同意图返回首次订单，同键不同意图返回 `ORDER_IDEMPOTENCY_CONFLICT`；并发insert冲突后必须精确查询requestId并核对clientId/fingerprint，不能把任意duplicate错误当成重放。历史订单缺少这两个可选字段，无需迁移。真实控制台已确认 `_id_`、`client_time_desc`、`order_no_unique`、`request_id_unique` 同时存在，requestId索引为升序、unique和sparse；同键同payload重试返回相同orderNo且不增加第二条记录，不同意图真实返回冲突错误。**Server-side order idempotency has been validated against the real uniCloud orders collection with a unique sparse requestId index.** 微信前端在V5.6B之前仍不发送requestId。
 
 ## 4. AI推荐、RAG与Agent分工
 
@@ -162,4 +165,5 @@ RAG继续作为独立的单轮菜单知识问答能力，当前没有注册为Ag
 - [V5.5A Order Preview](agent/ORDER_PREVIEW.md)
 - [V5.5B Checkout Proposal](agent/ORDER_PROPOSAL.md)
 - [V5.5C Order Execution](agent/ORDER_EXECUTION.md)
+- [V5.6A Order Idempotency](agent/ORDER_IDEMPOTENCY.md)
 - [部署步骤](UNICLOUD_SETUP.md) / [README运行说明](../README.md)

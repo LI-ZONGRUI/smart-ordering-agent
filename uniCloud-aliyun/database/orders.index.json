@@ -17,5 +17,13 @@
       "MgoIsUnique": true,
       "MgoIsSparse": false
     }
+  },
+  {
+    "IndexName": "request_id_unique",
+    "MgoKeySchema": {
+      "MgoIndexKeys": [{ "Name": "requestId", "Direction": "1" }],
+      "MgoIsUnique": true,
+      "MgoIsSparse": true
+    }
   }
 ]

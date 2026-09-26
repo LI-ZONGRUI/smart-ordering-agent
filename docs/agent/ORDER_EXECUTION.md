@@ -109,7 +109,7 @@ items从点击最终确认时的当前Pinia购物车重新提取，不发送客�
 
 重新计价、确认值比较和写入位于同一次服务端请求中，显著缩小Preview到Create之间的数据变化窗口，但当前没有库存事务或serializable transaction，不能描述为完全解决数据库并发一致性。
 
-UI可以阻止同一页面流程中的双击重复创建。当前orders表只有orderNo唯一索引，没有客户端requestId或服务端幂等键。如果服务端已经写入但网络响应丢失，客户端重试可能创建重复订单。服务器级网络重试幂等性是已知限制，后续应以正式requestId和唯一索引设计解决，不能用临时内存锁冒充。
+UI可以阻止同一页面流程中的双击重复创建。V5.6A已经为 `createConfirmedOrder()` 实现可选requestId、request fingerprint和阿里云稀疏唯一索引，并通过真实uniCloud同键重放及冲突拒绝验收。当前微信前端尚未生成或传递requestId，正式Checkout接入属于V5.6B；在这之前，现有V5.5C UI流程不会自动使用服务器重试语义。详见 [Order Idempotency](ORDER_IDEMPOTENCY.md)。
 
 ## 真实微信与uniCloud验收
 

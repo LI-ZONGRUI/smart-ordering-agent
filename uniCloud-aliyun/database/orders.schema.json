@@ -11,6 +11,8 @@
     "remark": { "bsonType": "string" },
     "status": { "bsonType": "string", "enum": ["pending", "preparing", "completed", "cancelled"] },
     "clientId": { "bsonType": "string", "description": "开发阶段的匿名隔离标记，不是认证" },
+    "requestId": { "bsonType": "string", "minLength": 8, "maxLength": 128, "pattern": "^[A-Za-z0-9_-]+$", "description": "createConfirmedOrder可选幂等标识；由稀疏唯一索引保证非空值唯一" },
+    "requestFingerprint": { "bsonType": "string", "pattern": "^[a-f0-9]{64}$", "description": "规范化创建意图的SHA-256，仅供服务器校验重试内容" },
     "createTime": { "bsonType": "timestamp" }
   }
 }

@@ -1,5 +1,11 @@
 const crypto = require('crypto')
 const {
+  assertExistingIntentMatches,
+  createRequestFingerprint,
+  normalizeRequestId,
+  toSafeIdempotencyResult
+} = require('./order-idempotency')
+const {
   assertPricingMatchesExpected,
   isOrderBusinessError,
   toSafeOrderBusinessResult,
@@ -8,6 +14,7 @@ const {
 } = require('./order-pricing')
 const db = uniCloud.database()
 const CONFIRMED_PAYLOAD_KEYS = ['clientId', 'expectedPreview', 'items', 'remark']
+const IDEMPOTENT_CONFIRMED_PAYLOAD_KEYS = ['clientId', 'expectedPreview', 'items', 'remark', 'requestId']
 
 function checkClientId(clientId) {
   // clientId 只是开发期的数据隔离标记，任何人都可能伪造它，不能当作登录认证。
@@ -26,7 +33,35 @@ function hasExactKeys(value, expectedKeys) {
   return keys.length === expectedKeys.length && expectedKeys.every((key, index) => keys[index] === key)
 }
 
-async function persistPricedOrder({ clientId, priced, remark }) {
+function toPublicOrder(order) {
+  // requestId和requestFingerprint只用于服务器幂等判断，不返回普通客户端。
+  return {
+    _id: order._id,
+    orderNo: order.orderNo,
+    items: order.items,
+    totalPrice: order.totalPrice,
+    totalCount: order.totalCount,
+    remark: order.remark,
+    status: order.status,
+    clientId: order.clientId,
+    createTime: order.createTime
+  }
+}
+
+async function findOrderByRequestId(requestId) {
+  const result = await db.collection('orders').where({ requestId }).limit(2).get()
+  if (!result || !Array.isArray(result.data) || result.data.length > 1) {
+    throw new Error('订单幂等数据异常')
+  }
+  return result.data[0] || null
+}
+
+function resolveExistingOrder(existing, intent) {
+  assertExistingIntentMatches(existing, intent)
+  return toPublicOrder(existing)
+}
+
+async function persistPricedOrder({ clientId, priced, remark, idempotency = null }) {
   // 两个创建入口复用同一订单快照与持久化逻辑，避免出现第二套订单结构。
   const orderItems = priced.items.map(item => ({ dishId: item.dishId, name: item.name,
     price: item.unitPrice, quantity: item.quantity, subtotal: item.lineTotal }))
@@ -40,8 +75,12 @@ async function persistPricedOrder({ clientId, priced, remark }) {
     clientId,
     createTime: Date.now()
   }
+  if (idempotency) {
+    order.requestId = idempotency.requestId
+    order.requestFingerprint = idempotency.requestFingerprint
+  }
   const added = await db.collection('orders').add(order)
-  return { _id: added.id, ...order }
+  return toPublicOrder({ _id: added.id, ...order })
 }
 
 module.exports = {
@@ -88,7 +127,10 @@ module.exports = {
   async createConfirmedOrder(payload) {
     // 该接口只接受固定字段；expectedPreview是待比较的确认值，不是价格依据。
     try {
-      if (!hasExactKeys(payload, CONFIRMED_PAYLOAD_KEYS)) {
+      const hasRequestId = payload && typeof payload === 'object' &&
+        Object.hasOwn(payload, 'requestId')
+      const expectedKeys = hasRequestId ? IDEMPOTENT_CONFIRMED_PAYLOAD_KEYS : CONFIRMED_PAYLOAD_KEYS
+      if (!hasExactKeys(payload, expectedKeys)) {
         return { errCode: 'ORDER_ITEMS_INVALID', errMsg: '订单菜品或数量无效' }
       }
       const { clientId, items, expectedPreview, remark } = payload
@@ -96,12 +138,36 @@ module.exports = {
       checkRemark(remark)
       validateExpectedPreview(expectedPreview)
 
+      let idempotency = null
+      if (hasRequestId) {
+        const requestId = normalizeRequestId(payload.requestId)
+        const requestFingerprint = createRequestFingerprint({ clientId, items, expectedPreview, remark })
+        idempotency = { requestId, requestFingerprint }
+
+        // 该预查询优化普通重试；并发安全仍由requestId稀疏唯一索引保证。
+        const existing = await findOrderByRequestId(requestId)
+        if (existing) return { errCode: 0, order: resolveExistingOrder(existing, { clientId, requestFingerprint }) }
+      }
+
       // 在最终写入请求中再次查询真实菜单和计算金额，不能复用旧Preview价格。
       const priced = await validateAndPriceOrderItems(items, { db, strictItems: true })
       assertPricingMatchesExpected(priced, expectedPreview)
-      const order = await persistPricedOrder({ clientId, priced, remark })
-      return { errCode: 0, order }
+      try {
+        const order = await persistPricedOrder({ clientId, priced, remark, idempotency })
+        return { errCode: 0, order }
+      } catch (writeError) {
+        if (!idempotency) throw writeError
+        // 不根据任意duplicate错误猜测索引；只有精确查到同requestId记录并校验意图后才视为重放。
+        const existing = await findOrderByRequestId(idempotency.requestId)
+        if (!existing) throw writeError
+        return { errCode: 0, order: resolveExistingOrder(existing, {
+          clientId,
+          requestFingerprint: idempotency.requestFingerprint
+        }) }
+      }
     } catch (error) {
+      const idempotencyResult = toSafeIdempotencyResult(error)
+      if (idempotencyResult) return idempotencyResult
       const businessResult = toSafeOrderBusinessResult(error)
       if (businessResult) return businessResult
       // 数据库、程序或其他未知异常都使用固定文案，避免泄露内部细节。
@@ -115,6 +181,6 @@ module.exports = {
       .where({ clientId })
       .orderBy('createTime', 'desc')
       .get()
-    return result.data
+    return result.data.map(toPublicOrder)
   }
 }

@@ -5,6 +5,7 @@ const vm = require('node:vm')
 
 const pricingPath = '../uniCloud-aliyun/cloudfunctions/orders/order-pricing'
 const pricingModule = require(pricingPath)
+const idempotencyModule = require('../uniCloud-aliyun/cloudfunctions/orders/order-idempotency')
 const { validateAndPriceOrderItems } = pricingModule
 const orderSource = fs.readFileSync('uniCloud-aliyun/cloudfunctions/orders/index.obj.js', 'utf8')
 const adminSource = fs.readFileSync('uniCloud-aliyun/cloudfunctions/order-preview-admin/index.js', 'utf8')
@@ -67,6 +68,7 @@ function loadOrders(options = {}) {
     require(name) {
       if (name === 'crypto') return { randomBytes: () => Buffer.from([1, 2, 3]) }
       if (name === './order-pricing') return pricing
+      if (name === './order-idempotency') return idempotencyModule
       throw new Error(`unexpected require: ${name}`)
     }
   }
