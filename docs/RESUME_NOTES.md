@@ -1,40 +1,44 @@
 # 求职项目素材
 
-用于简历和面试准备，不是产品运行说明。下述表达基于已实现代码、真实云端评测和微信开发者工具验收；使用时应能解释对应实现，不把学习项目表述为商业上线系统。
+## 项目名称
 
-## A. 一句话版
+**基于 LLM + RAG + Function Calling 的微信智能点餐 Agent**
 
-基于Vue3、uni-app与uniCloud构建微信点餐系统，接入Qwen推荐与可追溯RAG菜单问答。
+技术栈：Vue 3、Composition API、uni-app、Pinia、uniCloud、Qwen3.8-Flash、qwen3.7-text-embedding-flash、Function Calling、JSON Schema、云数据库
 
-## B. 简历版（建议选用以下4条）
+以下表述基于仓库真实实现、微信开发者工具验收和 uniCloud 云端验证。RAG 菜单问答与 Ordering Agent 是两项独立能力，当前没有把 `rag.answer()` 注册为 Agent Tool。
 
-- 使用Vue3、uni-app、Pinia与uniCloud实现微信点餐闭环，覆盖菜单、购物车、确认订单和云端持久化；后端重新校验菜品状态与价格，并保存订单快照。
-- 接入Qwen3.8-Flash实现自然语言菜品推荐，通过服务端dishId白名单、在售状态二次校验及数据库实时价格计算，约束模型结果进入业务流程。
-- 构建21条人工审核知识源，使用qwen3.7-text-embedding-flash生成512维向量，实现幂等索引和Exact Cosine Top-3检索；采用Evidence-first设计，由模型选择证据ID、服务器校验并渲染原文。
-- 建立12-query固定端到端评测，真实云端Answerability为91.67%（11/12）、Server Grounding结构检查为100%（12/12），并定位“已检索到证据却拒答”的False Negative；完成微信菜单问答UI真实验收。
+## A. 中文完整版（4 条）
 
-**指标口径：** 以上仅适用于当前21-chunk小型知识库与人工固定12-query评测集，不代表生产准确率；Server Grounding是来源与渲染结构检查，不是语义正确率。不要把两项百分比合并成“模型准确率100%”。
+- 构建 Vue 3 + uni-app 微信点餐闭环，使用 Pinia 管理购物车、uniCloud 持久化菜单与订单；在服务端重新校验菜品状态和价格、按整数分计算金额并保存订单快照，避免信任客户端价格。
+- 设计 Evidence-first RAG 菜单问答：将 21 条人工审核知识生成 512 维向量，以 Exact Cosine Top-3 检索，由 Qwen 只选择 evidence ID，再由服务器校验并按可信原文渲染答案；12 条固定云端评测中 Server Grounding Pass 为 12/12，Answerability 为 11/12。
+- 实现基于 Qwen 原生 Function Calling 的多步 Ordering Agent，通过 Tool Registry、Executor allowlist 与 JSON Schema 约束工具调用；真实验证模型可观察 `search_menu` 空结果后自主调用 `list_available_drinks`，并将加购限制为待确认 Proposal。
+- 建立人机确认与确定性交易边界：购物车动作经服务端复核和用户确认后才修改 Pinia；订单经过 Preview、最终确认、再次校价和逐项预期比较，并以 `requestId + SHA-256 fingerprint + UNIQUE sparse index` 实现同请求重放与冲突检测。
 
-如简历版面有限，可精简模型全名，但保留“人工审核知识、服务端事实边界、真实小样本评测”三个重点，不必把所有指标塞进bullet。
+> 指标口径：RAG 数据来自 21-chunk 小型知识库与 12-query 人工固定评测集（6 supported、3 unsupported-domain、3 external-OOD），属于项目级验证，不代表生产准确率。
 
-## C. 面试详细版（约1～2分钟）
+## B. 中文压缩版（3 条）
 
-我做的是一个微信点餐项目，用Vue3、uni-app、Pinia和uniCloud打通菜单、购物车、确认订单和云端持久化。订单金额由后端重新读取菜品价格计算，并保存快照，避免相信客户端金额。
+- 构建 Vue 3、uni-app、Pinia 与 uniCloud 微信点餐系统，完成云端菜单、购物车、订单预览、服务端实时校价、订单快照与持久化闭环。
+- 设计 21 条人工审核知识的 Evidence-first RAG，以 512 维 Embedding + Exact Cosine Top-3 检索，由模型选择证据、服务器渲染事实；12 条固定评测中 Answerability 11/12、Server Grounding 12/12。
+- 实现原生 Function Calling 多步 Agent 与 Human-in-the-loop 副作用控制，并通过 Preview 二次校价、`ORDER_CONFIRMATION_STALE`、requestId 指纹和数据库唯一索引保护订单确认与重试。
 
-在业务闭环上，我接入Qwen做自然语言推荐，再增加独立的RAG菜单问答。知识库来自21条人工审核的菜单知识，用512维Embedding做Exact Cosine Top-3检索，再结合实时菜品信息让模型判断能否回答、选择证据。
+## C. English Version (4 bullets)
 
-最重要的改动是收紧模型输出边界。真实测试中，模型把“柠檬香气”扩写成“清爽的柠檬香气”，即使引用ID合法也会发生。所以最终让模型只选证据ID，服务器校验后直接渲染知识原文，关闭自由事实措辞进入答案的路径。
+- Built a WeChat ordering flow with Vue 3, uni-app, Pinia, and uniCloud, including cloud-backed menus, cart management, server-side pricing, immutable order snapshots, and persisted order history.
+- Designed an evidence-first RAG pipeline over 21 human-reviewed knowledge chunks using 512-dimensional embeddings and exact cosine Top-3 retrieval; constrained Qwen to evidence selection and rendered factual answers on the server, achieving 11/12 answerability and 12/12 server-grounding passes on a fixed 12-query project evaluation set.
+- Implemented a multi-step Ordering Agent with native function calling, a centralized tool registry, executor allowlists, and JSON Schema validation; verified that the model can observe a failed menu search and select a second read tool without a hard-coded fallback.
+- Established human confirmation and deterministic transaction boundaries for side effects, with live cart revalidation, order preview and repricing, stale-confirmation rejection, and idempotent order creation using request IDs, canonical SHA-256 fingerprints, and a unique sparse database index.
 
-我还建立了12条固定问题的真实云端评测，Answerability为11/12，Grounding结构检查12/12通过。但酸梅汤问题的正确证据已经被检索到，模型却拒答，说明证据选择和判断仍可能失败。这个项目是小规模单轮方案，微信界面已真实验收；它还不是生产系统或Agent。
+## 推荐使用方式
 
-## 表达证据与避免误述
+- 一页中文简历优先使用 **B. 中文压缩版**；版面允许时使用 A 的 4 条。
+- 英文简历使用 C，并保留 “fixed 12-query project evaluation set” 的口径。
+- 面试时结合 [INTERVIEW_NOTES.md](INTERVIEW_NOTES.md) 解释真实失败案例、信任边界和限制，不把项目描述为生产级支付或库存系统。
 
-| 可以讲的工作 | 可追溯材料 | 不应扩写成 |
-| --- | --- | --- |
-| 点餐闭环与服务端校价 | [整体架构](ARCHITECTURE.md) | 支付、正式用户认证或生产交易已完成 |
-| 幂等索引首次21条insert、二次21条skip | [索引说明](rag/INDEXING.md) | 大规模向量数据库或分布式调度系统 |
-| evidence-first事实渲染 | [Generation演进](rag/GENERATION_TEST.md) | 彻底消除幻觉、形式化语义正确性保证 |
-| 小样本真实端到端指标及失败定位 | [Answer Evaluation](rag/ANSWER_EVALUATION.md) | 生产级准确率或完美检索 |
-| 单轮问答与独立推荐 | [V4总结](rag/V4_SUMMARY.md) | 多轮Agent、自主规划或Tool Calling已实现 |
+## 不应扩写的能力
 
-更多追问见 [INTERVIEW_NOTES.md](INTERVIEW_NOTES.md)。本次仅整理材料，不新增任何产品能力。
+- 没有微信支付、库存事务、正式用户认证或无人值守自动下单。
+- RAG 为单轮菜单问答；Agent 没有多轮会话记忆，也不会自动调用 RAG。
+- 当前使用 21 条知识和 Exact Search，没有生产规模 Vector DB。
+- Pending Action 与未决订单提交状态没有跨小程序重启恢复。

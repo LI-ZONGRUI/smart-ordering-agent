@@ -1,91 +1,177 @@
-# 面试问题与参考回答
+# 面试准备：微信智能点餐 Agent
 
-这些回答对应当前已实现项目，技术取舍以现有小规模实验为依据。涉及V5的内容仅为设想，不应讲成已经开发或部署。指标和案例见 [V4总结](rag/V4_SUMMARY.md) 与 [真实端到端评测](rag/ANSWER_EVALUATION.md)。
+## 30 秒项目介绍
 
-## 1. 为什么这个项目需要RAG？
+我用 Vue 3、uni-app、Pinia 和 uniCloud 做了一个微信智能点餐项目。除了菜单、购物车和云端订单闭环，还实现了两项独立的智能能力：Evidence-first RAG 菜单问答，以及基于 Qwen 原生 Function Calling 的多步 Ordering Agent。模型负责开放式理解、证据或工具选择；价格、状态、副作用、订单确认和幂等由服务器与用户确认控制。项目冻结时 747 项自动化测试通过，并完成真实微信端和 uniCloud 验收。
 
-菜单问答需要引用可审核的口味、配料和介绍，而模型自身知识不能作为本店事实。我把知识来源、版本、检索、模型选择和最终输出分开，能追溯答案来自哪条证据，也能区分“没检索到”和“模型没选”。这是在点餐业务上验证知识问答工程闭环，不是宣称8道菜必须使用复杂检索系统。
+## 90 秒项目介绍
 
-## 2. RAG和直接把菜单塞进Prompt有什么区别？
+项目先完成传统点餐闭环：菜单来自 uniCloud，购物车由 Pinia 管理，订单 Preview 和最终创建都由服务端读取实时价格与状态。
 
-现有AI推荐读取当前在售菜单提供给模型，适合本项目少量菜品的偏好推荐。RAG问答则将审核知识独立建索引，按问题检索Top-3作为上下文，并显式保留来源。它减少每次提供的知识范围，但会引入Retrieval miss，不能保证比全量Prompt更好；项目没有做足以证明全面优越性的A/B实验。实时价格和状态仍从dishes读取。
+RAG 使用 21 条人工审核知识、512 维 Embedding 和 Exact Cosine Top-3。真实测试中，模型曾在证据之外加入“解腻”，也曾把“柠檬香气”扩写成“清爽的柠檬香气”。所以我把信任边界改为 Evidence-first：模型只选择 `answerable`、dishIds 和 knowledgeIds，服务器验证后直接用可信证据原文生成答案。12 条固定云端评测中，Answerability 为 11/12，Server Grounding 为 12/12。
 
-## 3. 为什么用Embedding？
+Ordering Agent 使用原生 Function Calling、Tool Registry、Executor allowlist 和参数 Schema。真实案例中，模型先搜索可乐得到空结果，再自主调用在售饮料工具返回柠檬茶，这个第二步不是代码写死。写操作则采用 Proposal → 服务端校验 → 用户确认：LLM 不能直接修改购物车。订单还实现 Preview 后再次校价、旧确认拒绝，以及 requestId、请求指纹和数据库唯一索引共同构成的幂等重试。
 
-将问题和知识文本转换到同一模型的向量空间，用相似性寻找语义相关内容，支持不同措辞的匹配。本项目使用qwen3.7-text-embedding-flash的512维输出，并验证维度、有限数字、批量index映射和模型一致性。相近向量不意味着一定能回答问题，更不等于事实为真。
+## 3 分钟项目介绍
 
-## 4. 为什么用cosine similarity？
+### 1. 业务基础
 
-用点积除以两向量范数乘积，比较方向相近程度，适合作为当前文本Embedding的相关性排序基线。代码验证长度、有限数字和非零范数；先对向量按各自最大绝对值缩放，降低平方溢出风险，再计算cosine。当前21条知识可逐条Exact Search，无需专业Vector DB或ANN。时间量级随候选数与维度的乘积增长，未声称具备大规模检索性能。
+客户端是 Vue 3 + uni-app 微信小程序，Pinia 保存购物车。categories、dishes 和 orders 在 uniCloud；页面通过 service 调用云对象，数据库不直接暴露给客户端。订单只提交 dishId 和 quantity，服务端读取真实状态和价格并保存快照。
 
-## 5. 为什么Top-K选3？
+### 2. RAG
 
-这是当前设计与冻结实验设置，便于观察少量证据选择和保持上下文简洁，不是普适最优值。其代价是4个relevant最多召回3/4，5个最多3/5；不能把Recall不到100%都归因于算法差。项目没有做Top-K调优，后续要在独立评测上比较收益、遗漏和成本，不能为了现有标签把K调大刷分。
+人工源是 21 条 verified 菜单知识，部署时生成 512 维 Embedding，按 knowledgeId、contentHash、版本、模型和维度幂等索引。查询采用 Exact Cosine Top-3，因为只有 21 条数据，简单、可解释且易测试。
 
-## 6. 为什么没有similarity threshold？
+系统没有使用固定 similarity threshold。真实 robustness 数据中 supported 与 unsupported 分数发生过重叠，相似度不是答案概率。生成阶段经历了三次收紧：自由答案会扩写事实；claim citation 只能证明 ID 合法；server-composed claims 仍会接受被扩写的 claim text。最终改成模型只选 evidence ID，服务器直接渲染原文。
 
-真实Robustness中，supported最低Top-1为0.373664，unsupported最高为0.405820，gap=-0.032156，分数发生重叠。简单固定阈值不能在该数据集上完美区分答案存在与否，因此当前只按cosine排序，不用分数自动拒答。不能把相似度当概率，也不能据此断言所有其他场景的阈值策略都无效。
+### 3. Agent
 
-## 7. 什么是Grounding？
+Agent 与 RAG 独立。Agent 使用 Qwen3.8-Flash 原生 Function Calling，Registry 定义四个工具，Executor 做 allowlist、Schema 校验与静态实现映射。模型每轮接收 Tool Result，再决定继续调用或结束，因此“可乐搜索为空后查在售饮料”属于真实多步循环。
 
-在本项目中是让输出事实可追溯到本次提供的可信证据，而不让模型常识直接补成本店事实。当前工程实现是服务器按已验证ID读取原文并渲染。结构来源正确与语义上是否真正回答了问题不同；后者还取决于证据选择、知识质量和完整性。
+对副作用，我没有给模型任意 Store 或订单写权限。`prepare_add_to_cart` 只返回 Pending Action；用户确认时客户端重新读取菜单，确认菜品仍存在、在售且价格未变化，才调用 Pinia mutation。
 
-## 8. 为什么最后不让LLM自由写answer？
+### 4. 订单与幂等
 
-真实初版出现“解腻”等无证据扩写；加入claim-level citation后，自由answer还能夹带claims之外内容。随后服务器拼接claims.text，但claim本身又把“具有柠檬香气”写成“具有清爽的柠檬香气”。合法ID不能保证claim语义受支持。
+Checkout 完全走确定性服务端逻辑，不经过 Qwen。Preview 先校价，用户确认后 Create 再校价，并逐行比较 expected preview。真实测试中，柠檬茶从 12 元变成 13 元后，系统返回 `ORDER_CONFIRMATION_STALE`，没有静默创建 26 元订单。
 
-最终模型只返回answerable、dishIds、usedKnowledgeIds。服务器校验Top-3引用和实时菜品，再使用检索证据原文生成答案；自由answer/claims等额外字段直接拒绝。这个取舍牺牲一部分语言灵活性，换取事实措辞可逐字追溯，并没有证明模型证据选择正确。
+前端防重复按钮不能覆盖“服务端已落库但响应丢失”。因此每次确认生成一次 requestId，并冻结 payload。服务端把 clientId、items、expectedPreview 和 remark 规范化后计算 SHA-256 fingerprint。相同 key 与 payload 返回原订单，不同 payload 报冲突；并发下最终由数据库 UNIQUE sparse index 保证唯一性。
 
-## 9. 为什么Grounding 100%而Answerability只有91.67%？
+### 5. 结果和边界
 
-它们衡量不同层次。12/12 Grounding通过表示true答案符合原文渲染规则、false符合固定拒答及空引用。酸梅汤被错误拒答仍可能满足这些结构规则，因此Answerability只有11/12。不能把Grounding Pass理解为语义正确率或整体RAG正确率。
+项目完成真实微信端、uniCloud、RAG、Agent、购物车确认和持久化订单验收。当前仍是 21 条知识、12 条问题的小规模单轮系统，没有支付、库存事务、多轮记忆或生产规模 Vector DB。
 
-## 10. 酸梅汤False Negative是什么原因？
+## 架构讲解顺序
 
-已知“酸梅汤是什么味道？”expected=true、actual=false；dish-8-taste已经进入Top-3，retrievalRecallAt3=1。所以可定位为Generation / Evidence Selection / Answerability环节的False Negative，不是检索遗漏。现有输出不足以判断模型内部为什么拒答，不能编造具体心理原因。本项目保留失败案例，没有为消除单个失败修改标签或Prompt。
+1. **Client**：微信小程序、Vue 3、Pinia。
+2. **Services**：menu、ai、rag、agent、orders 调用边界。
+3. **Intelligence**：推荐、RAG、Ordering Agent 三项能力。
+4. **Validation**：Tool Registry、Executor、Pending Action、订单计价与确认。
+5. **Backend / Data**：uniCloud 云对象与 categories、dishes、knowledge_chunks、orders。
 
-## 11. “有什么饮料？”为什么不完整？
+RAG 与 Agent 共享真实菜单数据，但当前没有调用关系；`rag.answer()` 不是 Agent Tool。
 
-真实人工调用只选了dish-4-ingredients，回答了柠檬茶，但没有完整覆盖酸梅汤。后续自动评测观察到两层完整性损失：部分相关知识不在Top-3，部分已检索证据未被选择。未保存完整真实逐条输出的具体遗漏ID不能猜测。Grounding正确说明所说内容有来源，不保证所有该说的内容都被覆盖。
+## 高频问题与回答要点
 
-## 12. Knowledge Source与knowledge_chunks区别是什么？
+### 1. RAG 是什么？
 
-人工维护源是docs/rag/knowledge-source.json，21条审核知识含正文、来源字段、类型、scope、版本与verified。resources是供云对象部署读取的副本，SHA-256用于检查一致性；knowledge_chunks是带向量的派生索引。修改应先改源并审核，再同步和重新索引，不能手改数据库反过来当知识源。
+先从外部知识中检索与问题相关的内容，再把检索结果提供给生成模型。本项目把人工知识、派生向量索引、Retrieval、evidence 选择和服务器渲染分开，便于追溯答案来源。
 
-索引以knowledgeId为身份，比较版本、contentHash、模型、维度；没变化则skip。真实首次insert21、二次skip21说明幂等分支跑通，但不是并发索引系统的完整性能验证。
+### 2. Embedding 是什么？
 
-## 13. 实时价格为什么不放入RAG知识？
+把文本编码为数值向量，使语义相近的文本在向量空间中更接近。本项目使用 qwen3.7-text-embedding-flash 的 512 维向量；向量相近只表示检索相关性，不表示事实正确或一定可回答。
 
-价格、在售状态和销量会变化，长期文本及Embedding会过时。它们应从dishes实时读取，当前RAG只查询Top-3关联的菜品，并在生成后再次检查实时快照。问答正文仍来自审核知识，不让LLM编写可信价格，也不从evidence提取价格展示。
+### 3. 为什么用 cosine similarity？
 
-## 14. 怎么防止模型推荐不存在的菜品？
+它用向量夹角衡量方向相似性，适合作为文本向量排序基线。实现会检查等长、有限数字与非零范数，计算 `dot / (normA * normB)`。
 
-ai推荐提供当前真实在售菜单，模型只选dishId；服务器校验ID、去重、数量上限，再次查数据库确认存在与在售。前端展示菜名、价格等来自数据库，不采信模型自由字段。RAG则另行验证usedKnowledgeIds属于本次Top-3、dishIds属于实时允许菜品且与选中知识关联。ID白名单约束身份，不是对推荐理由所有语义的形式化保证。
+### 4. 为什么 Top-3？
 
-## 15. 为什么服务器重新计算价格？
+这是冻结的实验设置，在上下文长度和召回之间取一个简单起点。它不是普适最优值；当 relevant 超过 3 条时，Recall@3 存在理论上限。
 
-客户端金额可被修改且可能过时，模型金额也不可信。订单请求只提交菜品ID和数量等，后端查询真实价格，按分计算小计和总额，存储订单快照。这样历史订单不受后续改名改价影响；只有创建成功才清空购物车。当前没有实现微信支付。
+### 5. 为什么没有 similarity threshold？
 
-## 16. 现在是不是Agent？
+真实 robustness 评测出现 supported 与 unsupported Top-1 分数重叠。固定阈值无法在现有数据上完美分离，两者的 similarity 也不是概率，因此没有把某个观察值写进业务规则。
 
-不是。当前是single-turn RAG + separate recommendation capability。调用顺序由服务器代码确定，模型只选择结构化结果，没有autonomous planning、tool orchestration或multi-step agent loop。代码请求数据库和模型API，不等于模型执行了Tool Calling。
+### 6. 为什么没有向量数据库？
 
-## 17. 如果继续做V5 Agent，会怎么设计？（仅未来设想）
+当前只有 21 条知识，逐条 Exact Search 计算量小，行为更透明且容易冻结测试。规模扩大后再评估 ANN 或专用 Vector DB，当前引入只会增加运维复杂度。
 
-先确认是否真的存在需要多步工具执行的用户任务；单次知识问答不必强行Agent化。若需要跨菜单查询、购物车操作等工作流，可以设计受限工具schema、服务端参数/权限校验、只读与写操作区分、幂等操作、超时和失败补偿；加购或下单等用户有感动作需明确确认。还需限制循环步数和成本，保留审计但不记录密钥，使用独立任务集验证成功率与误操作率。
+### 7. 为什么只有 21 chunks？
 
-这些均未实现，没有开始V5，也不应在简历中写成已有自主下单Agent。
+第一版强调人工审核、来源追踪和知识边界，使用真实菜单 description、taste、ingredients。它足以验证完整工程链路，但不足以代表生产知识覆盖率。
 
-## 18. 如何解释评测和下一步？
+### 8. RAG 会 hallucination 吗？
 
-将12条人工固定标签分为6 supported、3 unsupported-domain、3 external-ood；分别测Answerability、证据Precision/Recall、检索可用性和结构Grounding，不用LLM Judge。执行失败单独报告并排除正常拒答统计，说明分母，不能伪装成模型拒答正确。
+会。检索到证据不代表模型只会说证据内容，也不代表模型一定选对证据。本项目的真实“解腻”和“清爽的柠檬香气”就是例子。
 
-下一步可先扩大独立样本、保存逐条真实输出、检查标签一致性，比较不同策略时冻结共同baseline。当前小集91.67%不是生产准确率；可能存在样本偏差和运行波动，也没有生产流量测试。
+### 9. Evidence-first Grounding 如何降低 hallucination？
 
-## 19. 为什么“有可乐吗”不回答“没有”？
+模型只返回合法 evidence ID；服务器验证 ID 属于本次 Top-3，再直接使用 evidence 原文生成答案。这样阻断模型改写事实进入最终答案，但不能保证模型一定选全或选对证据。
 
-真实微信验收中返回知识不足。知识库未提供可靠证据，不足以推出菜单确定不存在可乐。“没有检索到”“知识源没有记录”和“现实中没有”不是等价命题；系统没有把检索失败升级为事实判断。
+### 10. Function Calling 与普通 prompt JSON 有什么区别？
 
-## 20. 还有哪些安全和产品边界？
+原生 Function Calling 让模型通过协议化的 tool call 返回工具名和结构化参数，Tool Result 也以专门角色回传；普通 prompt JSON 只是要求模型输出一段符合格式的文本。两者都需要服务端做 allowlist、Schema 和业务校验。
 
-clientId只是匿名开发隔离，不是认证；管理入口的云端来源限制也不是完整管理员身份系统。密钥从云端环境变量读取，正式响应不含向量、Prompt、请求头或原始模型响应；本地调试参数和绑定信息由Git忽略。尚无正式登录、支付、生产级限流与全套治理，不能把学习项目宣传为可直接上线经营的系统。
+### 11. Agent 和普通 LLM API 调用有什么区别？
+
+普通调用通常一次输入到一次输出；Agent Loop 会执行“模型决策 → Tool → Observation → 再决策”，直到得到最终答案或达到步数上限。模型可根据运行结果改变下一步动作。
+
+### 12. 为什么“可乐”案例属于 multi-step Agent？
+
+第一步 `search_menu("可乐")` 得到 count=0，结果回传模型；模型观察后第二步选择 `list_available_drinks()`，返回在售柠檬茶。服务器没有写死 no-cola fallback。
+
+### 13. Tool Result 为什么不能直接信模型？
+
+模型只提出工具名和参数，真实结果来自服务器实现与数据库。即便模型描述了某个价格或状态，也必须使用 Tool Result 或数据库事实，不能把模型文本当业务数据。
+
+### 14. 为什么 Tool 使用 allowlist？
+
+防止模型调用未授权函数、动态路径或任意代码。Registry 和静态 implementation map 限定可达能力，未知工具直接拒绝。
+
+### 15. 为什么需要 parameter schema？
+
+它限制字段、类型、必填项和范围，并使用 `additionalProperties=false` 拒绝额外参数。Schema 解决结构输入问题，后端仍需校验菜品状态和价格等业务事实。
+
+### 16. 为什么 Cart Action 先 Proposal 再 Confirmation？
+
+加购是用户可见副作用。Tool 只生成经过服务端校验的 Pending Action，UI 明确展示数量与价格；用户点击确认后再次读取实时菜单，才修改 Pinia，避免模型直接执行和旧事实提交。
+
+### 17. 为什么订单不直接做 Agent Tool？
+
+订单包含金额确认、持久化和失败语义，适合确定性事务流程。Qwen 不参与 Preview、校价、expected comparison、request fingerprint 或数据库写入，减少不可重复决策进入交易边界。
+
+### 18. 什么是 TOCTOU？
+
+Time-of-check to time-of-use：检查事实和真正使用事实之间存在时间窗口。菜品可能在 Preview 后改价或售罄，因此 Create 必须再次读取数据库并比较用户确认的预期。
+
+### 19. 为什么 Preview 后 Create 还要重新计价？
+
+Preview 只是当时的快照。若只信 Preview，确认到创建之间的价格或状态变化会被忽略。Create 重新校验并逐行比较，变化时返回 `ORDER_CONFIRMATION_STALE`，让用户重新确认。
+
+### 20. 什么是 idempotency？
+
+同一逻辑请求重复执行时，不产生额外副作用。本项目对相同 requestId 和相同 fingerprint 返回已创建订单，而不是重复插入。
+
+### 21. requestId 和 orderNo 有什么区别？
+
+requestId 是客户端为一次提交意图生成的幂等键；orderNo 是订单成功落库后的业务编号。requestId 不能替代订单号、身份认证或授权。
+
+### 22. 为什么还需要 fingerprint？
+
+只有 requestId 无法判断重试 payload 是否被换掉。服务端规范化关键字段并计算 SHA-256；同 key 不同 fingerprint 返回 `ORDER_IDEMPOTENCY_CONFLICT`。
+
+### 23. 为什么使用 sparse unique index？
+
+`unique` 在数据库层阻止相同 requestId 并发插入；`sparse` 让旧订单或不走 confirmed 路径、没有 requestId 的记录不互相冲突。
+
+### 24. 为什么 check-then-insert 有 race condition？
+
+两个并发请求可能同时查询“未存在”，随后都尝试插入。应用层预查不能原子保证唯一，数据库 UNIQUE constraint 才是最终并发防线。
+
+### 25. 为什么 Agent 与 RAG 没有硬绑在一起？
+
+菜单知识问答与实时工具编排有不同的输入、评测和信任边界。当前需求可分别完成，强行连接会增加链路、成本和故障面。未来只有出现需要知识检索的 Agent 任务时，才考虑把受限 RAG 能力注册为 Tool。
+
+### 26. 当前系统还有什么问题？
+
+知识只有 21 chunks，评测只有 12 query；RAG 与 Agent 均无多轮记忆；购物车和 Pending Action 不持久化；未决订单提交状态不跨重启恢复；没有正式登录、支付、库存事务、exactly-once 分布式事务或生产规模向量检索。
+
+## 如果再给两周
+
+1. 扩大并版本化独立评测集，加入更多同义问法、困难拒答和回归样本。
+2. 分析 supported False Negative，比较 evidence selection 策略，而不直接按当前小集调 Prompt。
+3. 设计 Pending Action 与未决订单提交的安全本地恢复，并加入过期和用户切换处理。
+4. 增加 uni-id 身份与服务端授权，再评估受限订单查询 Tool。
+5. 为支付和库存建立独立状态机、幂等回调和事务/补偿设计，不让 Agent 直接执行。
+
+## Current Scope / Future Work
+
+- Knowledge Base：21 chunks；baseline：12 fixed queries。
+- RAG 是 single-turn；Agent 没有 multi-turn conversation memory。
+- RAG 不是 Agent Tool。
+- Cart 在 Pinia；Pending Action 不持久化。
+- 未决 requestId 与 frozen payload 不跨刷新或小程序重启恢复。
+- 没有支付、库存事务或 exactly-once distributed transaction。
+- 没有 production-scale Vector DB。
+
+这些边界说明当前工程验证覆盖到哪里，也给出了下一步可以被独立评测的方向。

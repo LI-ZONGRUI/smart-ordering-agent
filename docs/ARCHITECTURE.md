@@ -1,171 +1,355 @@
-# 项目整体架构
+# 系统架构
 
-这是Vue3 + uni-app + Pinia + uniCloud的微信点餐项目，包含传统点餐、独立LLM推荐、单轮RAG知识问答和Ordering Agent。当前Agent后端只生成购物车动作提案；用户在前端明确确认并通过实时菜单复核后，才修改Pinia购物车。结算与最终订单确认由Pinia购物车直接调用orders服务，不经过模型；当前不包含支付，也不是完整自主点餐系统。
+## 1. 项目定位
 
-## 1. 组件关系
+这是一个基于 Vue 3、uni-app、Pinia 与 uniCloud 的微信智能点餐项目，包含三条相互独立但共享真实菜单事实的智能能力：
 
-```text
-WeChat Mini Program
- └─ Vue3 + uni-app + Composition API
-     ├─ 页面：菜单/详情/购物车/确认订单/订单/我的/首页
-     ├─ 独立能力页：AI智能点餐、菜单问答
-     ├─ Pinia：购物车状态、云端订单查询缓存
-     └─ services/：menu.js、orders.js、ai.js、rag.js
-          ↓
-        uniCloud Cloud Objects
-          ├─ menu   → categories、dishes
-          ├─ orders → 共享dishes校验/计价
-          │            ├─ previewOrder → 只读预览 → STOP
-          │            ├─ createOrder → 再次校验 → orders写入/读取
-          │            └─ createConfirmedOrder → 确认值比较 + 可选requestId幂等 → orders
-          ├─ ai     → dishes → Model Studio / qwen3.8-flash
-          │                      → 菜品ID校验、实时价格计算
-          ├─ rag    → knowledge_chunks + dishes
-                       ├─ Model Studio / qwen3.7-text-embedding-flash
-                       │    Query Embedding（512维）
-                       ├─ Exact cosine Top-3（云对象内计算）
-                       └─ Model Studio / qwen3.8-flash
-                            answerable + evidence IDs
-                            → 服务端验证与证据原文渲染
-          └─ agent  → Model Studio / qwen3.8-flash Function Calling
-                       → Tool Registry → Executor allowlist
-                       → Read-only Menu Tools / Action Preparation Tool
-                       → dishes → Server Validated Pending Action
-                       → UI Confirmation → Live Menu Revalidation
-                       → Pinia Cart Mutation
+- Qwen 菜品推荐：自然语言偏好 → 真实菜品白名单。
+- RAG 菜单问答：知识检索 → evidence 选择 → 服务器原文渲染。
+- Ordering Agent：原生 Function Calling → 菜单 Tool → 待确认购物车动作。
+
+RAG 与 Agent 当前没有互相调用；`rag.answer()` 没有注册为 Agent Tool。购物车和订单副作用也不由 LLM 直接执行。
+
+## 2. 分层架构
+
+```mermaid
+graph TB
+  subgraph Client[Client Layer]
+    WX[WeChat Mini Program<br/>Vue 3 + uni-app]
+    PINIA[Pinia<br/>Cart + Order Query Cache]
+  end
+
+  subgraph Services[Application Services]
+    MS[Menu Service]
+    AIS[AI Recommendation Service]
+    RS[RAG Service]
+    AS[Agent Service]
+    OS[Orders Service]
+  end
+
+  subgraph Intelligence[Intelligence Layer]
+    REC[Qwen Recommendation]
+    RAG[RAG Pipeline]
+    AG[Ordering Agent<br/>Native Function Calling]
+  end
+
+  subgraph Validation[Tool / Validation Layer]
+    REG[Tool Registry]
+    EXE[Executor Allowlist + Schema]
+    ACT[Pending Action Validation]
+    PRICE[Order Validation + Integer-cent Pricing]
+  end
+
+  subgraph Cloud[uniCloud Backend]
+    MENU[menu]
+    AI[ai]
+    RAGOBJ[rag]
+    AGOBJ[agent]
+    ORD[orders]
+  end
+
+  subgraph DB[Database]
+    C[(categories)]
+    D[(dishes)]
+    K[(knowledge_chunks)]
+    O[(orders)]
+  end
+
+  WX --> PINIA
+  WX --> MS
+  WX --> AIS
+  WX --> RS
+  WX --> AS
+  WX --> OS
+  MS --> MENU
+  AIS --> AI
+  RS --> RAGOBJ
+  AS --> AGOBJ
+  OS --> ORD
+
+  AI --> REC
+  RAGOBJ --> RAG
+  AGOBJ --> AG
+  AG --> REG --> EXE --> ACT
+  ORD --> PRICE
+
+  MENU --> C
+  MENU --> D
+  REC --> D
+  RAG --> K
+  RAG --> D
+  EXE --> D
+  PRICE --> D
+  PRICE --> O
 ```
 
-Pinia是页面状态层，不是所有网络请求的必经网关。推荐与问答页直接通过services访问云对象；购物车不入库，订单store只缓存云端查询结果。
+### Client Layer
 
-## 2. 四个Collection
+- 页面只展示经过 service 清洗的数据。
+- Pinia Cart 是客户端购物车状态；订单 Store 只缓存云端查询结果。
+- 首页提供 AI 推荐、菜单问答与 Ordering Agent 三个独立入口。
+- TabBar 保持首页、菜单、购物车、订单、我的五项。
 
-| Collection | 职责与主要数据 |
+### Application Services
+
+`src/services/` 集中处理云对象调用、输入校验、响应白名单和友好错误：
+
+- `menu.js`：分类与菜品。
+- `ai.js`：自然语言菜品推荐。
+- `rag.js`：正式单轮 `rag.answer(query)`。
+- `agent.js`：正式 `agent.run(query)` 与前端动作确认复核。
+- `orders.js`：Preview、Confirmed Create、requestId 与结果未知重试状态所需结构。
+
+### Intelligence Layer
+
+- Recommendation 使用 Qwen3.8-Flash 选择真实菜品 ID。
+- RAG 使用 qwen3.7-text-embedding-flash/512 做检索，再由 Qwen3.8-Flash 选择 evidence ID。
+- Agent 使用 Qwen3.8-Flash 原生 Function Calling，允许有限多步 Tool Loop。
+
+### Tool / Validation Layer
+
+- Registry 是 Agent 唯一机器可读 Tool 定义源。
+- Executor 使用静态实现映射、allowlist、参数 Schema 与 `additionalProperties=false`。
+- Action Tool 只生成 Pending Action，不修改购物车。
+- Orders 使用实时数据库事实、整数分计价、Expected Preview 比较和幂等校验。
+
+### uniCloud 与数据库
+
+| Collection | 职责 |
 | --- | --- |
-| categories | 分类ID、名称、排序 |
-| dishes | 菜名、分类、描述、价格、图片、销量、辣度、配料、在售状态等实时菜单事实 |
-| orders | 订单号、菜品快照、数量、金额、备注、状态、clientId、时间；confirmed路径可选保存requestId和内部fingerprint |
-| knowledge_chunks | 审核知识及来源、contentHash、版本、模型/维度、向量和时间；knowledgeId唯一 |
+| categories | 菜单分类及排序 |
+| dishes | 菜名、介绍、配料、实时价格、销量、辣度和在售状态 |
+| knowledge_chunks | 已验证知识的派生向量索引，不是人工 Source of Truth |
+| orders | 订单快照、状态、匿名 clientId，以及 confirmed 路径的幂等字段 |
 
-这些collection不向小程序开放直接读写。调用云对象不等于已实现完善授权：clientId仅为临时匿名隔离，尚无正式登录与用户认证。
+数据库客户端直连权限关闭，业务访问通过云对象完成。
 
-## 3. 传统点餐数据流
-
-1. menu service读取分类、菜品，详情页使用同一正式数据源。
-2. Pinia cart维护数量、删除、清空及预览总价，拦截售罄菜品。
-3. 确认订单只提交dishId、quantity、remark和clientId；不把客户端价格作为依据。
-4. `previewOrder(items)`与创建订单复用同一个服务端校验/计价核心，只读dishes并返回待确认明细；它不写orders，也不生成订单号。
-5. `createOrder(payload)`仍会重新查询dishes，校验存在与在售状态，按分计算小计和总额，保存菜名、单价、数量、小计快照。
-6. 云端创建成功才清空购物车；失败保留。订单按clientId查询，重新打开仍可查看。
-
-历史订单不随菜品改价或改名变化；预览价不替代下单时的服务器真实价格。V5.5A Server-validated Order Preview已用真实uniCloud菜单数据完成验收，Agent仍没有Order Tool。
-
-当前订单阶段边界：
+## 3. 传统菜单与订单
 
 ```text
-Pinia Cart
- → only dishId / quantity
- → orders.previewOrder()
- → Shared Validation / Pricing
- → Fresh dishes DB
- → Server Validated Checkout Proposal
- → Frontend Structure / Cents Validation
- → Order Pending Action
- → Explicit Information Confirmation
- → Final Explicit Order Confirmation
- → orders.createConfirmedOrder()
- → 再次 Server Validation / Pricing
- → Expected Preview Comparison
- → Persisted Order
- → Cart Clear
-```
-
-Preview与Create共享items校验、重复dishId拒绝、实时菜品查询、在售校验、1～99数量规则和整数分计价；订单最多包含1～30种菜品。Preview是server-validated checkout proposal，不是持久订单、交易、预留、支付意图、授权Token或不可变价格保证。真实验收中，柠檬茶两杯返回总价24元，售罄酸梅汤被 `ORDER_DISH_UNAVAILABLE` 拒绝；检查orders集合未观察到本次Preview创建的新记录。V5.5B前端保存dishId/quantity快照，确认信息时检测购物车变化；确认只改变页面状态。**Checkout proposal flow has been integrated and validated in the WeChat mini-program.**
-
-V5.5C增加独立最终按钮和 `createConfirmedOrder()`。服务器在同一次请求中重新计价，以dishId Map逐项比较quantity、unitPrice、lineTotal及汇总金额，一致后才调用共享持久化helper。成功后前端才清空Cart；失败保留Cart。**Confirmed order execution has been validated in the WeChat mini-program and the real uniCloud orders collection.** 真实成功场景持久化了柠檬茶两杯、总价24元、状态 `pending` 的订单，页面与数据库订单号均为 `OD1790357975859B4A2B5`；价格变化与最终售罄场景均拒绝写入、保留Cart并让旧Proposal失效。V5.5C真实验收时只有客户端防双击；当前仍没有库存事务或serializable transaction。
-
-V5.6A为 `createConfirmedOrder()` 增加可选requestId与规范化SHA-256 fingerprint，并在orders配置 `request_id_unique` 稀疏唯一索引。同键同意图返回首次订单，同键不同意图返回 `ORDER_IDEMPOTENCY_CONFLICT`；并发insert冲突后必须精确查询requestId并核对clientId/fingerprint，不能把任意duplicate错误当成重放。历史订单缺少这两个可选字段，无需迁移。真实控制台已确认 `_id_`、`client_time_desc`、`order_no_unique`、`request_id_unique` 同时存在，requestId索引为升序、unique和sparse；同键同payload重试返回相同orderNo且不增加第二条记录，不同意图真实返回冲突错误。
-
-V5.6B把该能力接入正式微信Checkout：Preview和信息确认阶段不生成key；第一次最终确认时生成一次 `ord-...` requestId，并冻结requestId、clientId、items、expectedPreview与remark。成功或服务端Replay成功后，前端显示orderNo、清Cart并清除提交状态；明确业务失败保留Cart但清除旧意图；结果未知时保留Cart、Proposal、key和冻结payload，显式重试同一内容。真实微信创建的验收订单在orders集合中具有非空requestId与requestFingerprint，并保持 `totalPrice=24`、`totalCount=2`、`status=pending`。**Server-side idempotent order creation has been integrated into and validated through the real WeChat checkout flow.** 当前恢复只覆盖页面生命周期，不包含刷新或小程序重启后的持久恢复，也不等于exactly-once分布式事务、支付幂等、分布式锁或全局事务隔离。
-
-## 4. AI推荐、RAG与Agent分工
-
-| 能力 | 输入/上下文 | 输出与信任边界 |
-| --- | --- | --- |
-| ai.recommend(message) | 预算、口味、食材偏好；当前在售dishes | 模型选择菜品；服务器校验真实ID、状态、价格并计算totalPrice；用户手动加购 |
-| rag.answer(query) | 单个菜单知识问题；Top-3审核知识及关联实时dishes | 模型选择evidence IDs与answerable；服务器验证后只渲染证据原文；不操作购物车 |
-| agent.run(query) | 单个自然语言目标；只读菜单Tool与购物车Action Preparation Tool | 模型选择工具；服务器返回待确认动作；用户点击确认后前端复核实时菜单并调用Pinia。没有云端Cart/Order写Tool |
-
-价格、售卖状态必须来自实时数据库，不从模型记忆获取。推荐、RAG与Agent分别维护职责；当前Agent没有把RAG注册为Tool，也不会代理推荐接口。
-
-## 5. 离线索引与在线问答
-
-```text
-人工维护 docs/rag/knowledge-source.json
- → 本地同步脚本 → rag/resources/knowledge-source.json + manifest
- → 管理索引流程 → Embedding → knowledge_chunks
-
-用户问答 → Query Embedding → 读取verified索引 → Exact Top-3
- → 实时dishes → LLM选择证据 → Server Validation
- → Trusted Evidence Lookup → 原文answer → UI
-```
-
-源知识是唯一人工维护源；resources是部署副本，数据库向量是派生索引。以knowledgeId为身份，版本/内容hash/模型/维度变化才重建；批量按item.index映射，部分失败明确报告，孤儿数据只报告不删除。详见 [索引说明](rag/INDEXING.md)。
-
-`rag`管理方法通过独立admin云函数手动调用，涵盖索引、Retrieval Evaluation、Robustness、Generation诊断和Answer评测。平台来源限制用于开发管理入口，不是uni-id管理员身份认证。微信问答页只调用正式answer，不调用评测或索引方法。
-
-## 6. Agent Orchestration
-
-```text
-Single Query（管理入口或微信Agent页面）
- → Agent UI / agent.run(query)
- → Ordering Agent
- → Qwen Native Function Calling
- → Tool Registry（唯一Schema来源）
- → Executor（allowlist与参数校验）
- → Read-only Menu Tools / prepare_add_to_cart
+Menu Page
+ → menu service
+ → menu cloud object
  → categories / dishes
- → Server Validated Pending Action（如适用）
- → role=tool结果回传Qwen
- → Explicit User Confirmation
- → Live Menu Revalidation
- → Pinia Cart Mutation
- → STOP
+
+Order List Page
+ → orders service / Pinia query cache
+ → orders cloud object
+ → orders by clientId
 ```
 
-正式 `agent.run(query)` 与管理验收入口复用同一个有限Runner。模型返回的 `assistant.tool_calls` 被保留，服务器按匹配的 `tool_call_id` 追加 `role=tool` 结果，再进入下一轮决策。单次任务最多5轮模型决策、8次Tool调用；正式接口不返回Trace，`traceOnly` 只存在于HBuilderX管理入口的返回压缩层。
+clientId 只是开发期匿名隔离标记，不能作为身份认证或授权。
 
-三个Read Tool是 `search_menu`、`list_available_drinks` 和 `get_dish_detail`。V5.3增加 `prepare_add_to_cart` Action Preparation Tool：它重新查询dishes、按服务端价格计算金额，只生成 `requiresConfirmation:true` 的Pending Action。V5.4微信页面通过明确按钮确认，再调用现有菜单服务复核状态与价格，最后显式调用Pinia `addDish`；没有动态动作派发、云端购物车或订单写Tool。详见 [Agent Loop](agent/AGENT_LOOP.md)、[Action Proposal](agent/ACTIONS.md) 与 [User Confirmation](agent/CONFIRMATION.md)。
+## 4. Qwen Recommendation
 
-V5.5B在同一Agent页面增加独立的 `orderPendingAction`。它从Pinia购物车发起确定性的orders Preview，不调用Agent或Qwen；服务器响应经字段、数量和整数分金额校验后才显示。信息确认前再次比较购物车快照，变化即失效。`cartPendingAction` 与 `orderPendingAction` 互不混用，详见 [Checkout Proposal](agent/ORDER_PROPOSAL.md)。
+```text
+Natural-language preference
+ → ai.recommend(message)
+ → read on_sale dishes
+ → Qwen chooses 1–3 dishIds
+ → server validates IDs and status
+ → server rereads live price
+ → server calculates totalPrice
+ → frontend cards / existing Pinia addDish
+```
 
-V5.5B真实微信验收确认：柠檬茶两杯显示单价12元、合计24元；“确认订单信息”后购物车不变且orders集合无新增记录；测试菜品临时设为 `sold_out` 时显示安全业务错误且不生成确认卡。跨页保留旧Preview再修改Cart的场景受当前页面生命周期和TabBar导航影响，本次没有稳定复现；数量改变、项目新增和删除导致快照失效由自动化测试覆盖。该快照机制是客户端提案一致性保护，不是数据库并发控制。
+模型返回的价格、名称或状态都不成为业务事实；最终字段来自数据库。
 
-V5.5C订单创建仍不注册为Agent Tool。Qwen不接收Cart状态或expectedPreview，也不能触发订单写入；只有微信页面的显式最终确认调用orders云对象。详见 [Order Execution](agent/ORDER_EXECUTION.md)。
+## 5. RAG Pipeline
 
-当前已真实验收的端到端主链为：自然语言请求 → Qwen Ordering Agent → 原生Function Calling → 多步Tool编排 → 服务端校验的购物车动作提案 → 用户显式确认 → Pinia购物车真实变更 → 服务端订单预览 → 订单信息确认 → 最终下单确认 → 服务端再次校验 → 持久化订单。它仍不包含自动支付、Agent自主支付、无人确认自动下单或完整支付闭环；最终交易执行属于确定性的服务器边界。
+### 5.1 Knowledge 与 Indexing
 
-V5.4已在微信开发者工具完成真实验收：柠檬茶数量2的提案在确认前不改变购物车，确认并通过实时复核后准确增加2杯；取消不产生副作用；售罄酸梅汤不显示确认卡。这里的重新查询缓解Pending Action生成与用户点击之间的TOCTOU数据变化，但客户端Pinia不是事务系统，订单创建仍必须由orders云对象重新校验状态和价格。
+```text
+docs/rag/knowledge-source.json
+ → deployment resource sync check
+ → verified-only validation
+ → batch Embedding
+ → contentHash / sourceVersion / model / dimension comparison
+ → insert, update or skip knowledge_chunks
+```
 
-RAG继续作为独立的单轮菜单知识问答能力，当前没有注册为Agent Tool。
+- 21条人工审核知识，类型为 description、taste、ingredients。
+- Embedding 模型为 qwen3.7-text-embedding-flash，维度512。
+- knowledgeId 唯一；相同版本、hash、模型和维度直接 skip。
+- Source 不再存在的 orphan 只报告，不自动删除。
 
-## 7. 输出和运行边界
+### 5.2 Retrieval
 
-- Generation只允许answerable、dishIds、usedKnowledgeIds；拒绝自由answer/claims等额外字段。
-- 服务器验证Top-3引用、实时在售菜品和双向关联，取回证据原文；true按原顺序换行拼接，false使用固定知识不足文案。
-- 正式Answer响应不包含similarity、embedding、Prompt、原始模型响应或密钥。前端只显示回答与依据标题/正文，相关菜品重新读取menu service。
-- 密钥只存在云对象远程环境变量；前端和admin不保存API Key。保留本地配置的Git忽略规则。
-- 当前没有支付、正式登录、多轮会话、流式输出或云端Cart/Order Agent Write Tool；唯一购物车副作用来自用户按钮确认后的前端Pinia调用，且没有生产级容量与安全治理声明。
+```text
+Query
+ → Query Embedding
+ → read 21 compatible verified chunks
+ → Exact Cosine Similarity
+ → deterministic sort
+ → Top-3
+```
 
-## 8. 代码与文档入口
+当前规模只有21条，因此 Exact Search 简单、可解释、易测。没有 ANN、HNSW 或外部 Vector DB，也没有 threshold、BM25、reranker 或 type boost。
 
-- [前端页面](../src/pages) / [services](../src/services) / [Pinia stores](../src/stores)
-- [云对象与管理入口](../uniCloud-aliyun/cloudfunctions) / [数据库定义](../uniCloud-aliyun/database)
-- [V4总结](rag/V4_SUMMARY.md) / [Answer API](rag/ANSWER_API.md) / [端到端评测](rag/ANSWER_EVALUATION.md)
-- [V5.1 Tool Foundation](agent/TOOLS.md) / [V5.2 Agent Loop](agent/AGENT_LOOP.md)
-- [V5.3 Action Proposal](agent/ACTIONS.md)
-- [V5.4 User Confirmation](agent/CONFIRMATION.md)
-- [V5.5A Order Preview](agent/ORDER_PREVIEW.md)
-- [V5.5B Checkout Proposal](agent/ORDER_PROPOSAL.md)
-- [V5.5C Order Execution](agent/ORDER_EXECUTION.md)
-- [V5.6A Order Idempotency](agent/ORDER_IDEMPOTENCY.md)
-- [部署步骤](UNICLOUD_SETUP.md) / [README运行说明](../README.md)
+### 5.3 Evidence-first Generation
+
+```text
+Top-3 Knowledge + Live Dish Facts
+ → Qwen selects answerable / dishIds / usedKnowledgeIds
+ → server validates selected IDs and relationships
+ → server rereads live dishes
+ → server renders answer from trusted evidence.text
+```
+
+该设计来自真实 Grounding 失败：模型曾加入“解腻”，也曾把“柠檬香气”扩写为“清爽的柠檬香气”。最终模型不再生成事实句，事实文本由服务器从 evidence 原文确定性渲染。
+
+它阻止模型改写事实直接进入答案，但仍不能保证模型一定选全、选对 evidence。
+
+## 6. Ordering Agent
+
+### 6.1 Agent Action Flow
+
+```mermaid
+sequenceDiagram
+  participant U as User
+  participant UI as WeChat UI
+  participant A as Agent / Qwen
+  participant X as Registry + Executor
+  participant DB as dishes
+  participant C as Pinia Cart
+
+  U->>UI: Natural-language request
+  UI->>A: agent.run(query)
+  A->>X: Native tool_call
+  X->>DB: Read / revalidate menu facts
+  DB-->>X: Safe Tool Result
+  X-->>A: role=tool observation
+  A->>X: Optional next tool_call
+  X-->>A: Result or Pending Action
+  A-->>UI: Answer + sanitized Pending Action
+  UI-->>U: Explicit confirmation required
+  U->>UI: Confirm
+  UI->>DB: Fresh menu revalidation via service
+  UI->>C: addDish only after validation
+```
+
+### 6.2 Tool Contracts
+
+| Tool | 类型 | 副作用 |
+| --- | --- | --- |
+| search_menu | Read | 无 |
+| list_available_drinks | Read | 无 |
+| get_dish_detail | Read | 无 |
+| prepare_add_to_cart | Action Preparation | 只返回 Pending Action |
+
+真实“可乐”案例中，第二次 `list_available_drinks` 是 Qwen 观察 `search_menu` 空结果后的 re-planning，不是代码写死 fallback。
+
+### 6.3 Action Safety
+
+`prepare_add_to_cart` 只接受 dishId 与1～20整数 quantity。服务器重新读取 status 与 price，生成 `requiresConfirmation=true` 的提案。微信 UI 确认时再次读取菜单；不存在、售罄或价格变化都会让旧提案失效。
+
+LLM 不持有任意 Store 引用，不接受动态实现路径，也不能绕过 Executor 直接修改 Cart。
+
+## 7. Order Transaction Flow
+
+```mermaid
+sequenceDiagram
+  participant C as Pinia Cart
+  participant UI as WeChat Checkout UI
+  participant O as orders cloud object
+  participant D as dishes
+  participant DB as orders collection
+
+  C->>UI: dishId + quantity
+  UI->>O: previewOrder(items)
+  O->>D: Fresh validation / pricing
+  D-->>O: Live status and price
+  O-->>UI: Server-validated Preview
+  UI-->>UI: Explicit information confirmation
+  UI-->>UI: Final explicit confirmation<br/>generate requestId + freeze payload
+  UI->>O: createConfirmedOrder(payload)
+  O->>D: Fresh validation / pricing again
+  O-->>O: Compare every expected line and totals
+  O-->>O: Canonical SHA-256 fingerprint
+  O->>DB: Insert under unique sparse requestId
+  DB-->>O: Persisted order / replayed order
+  O-->>UI: Valid orderNo
+  UI->>C: clearCart only after success
+```
+
+### 7.1 确认值比较
+
+Create 不只比较总价，还逐项比较 dishId、quantity、unitPrice、lineTotal、totalQuantity 与 totalPrice。这样即使两个菜品一涨一降、总价碰巧不变，仍能识别旧 Preview。
+
+明确业务失败包括：
+
+- `ORDER_CONFIRMATION_STALE`
+- `ORDER_DISH_UNAVAILABLE`
+- `ORDER_DISH_NOT_FOUND`
+- `ORDER_ITEMS_INVALID`
+- `ORDER_IDEMPOTENCY_CONFLICT`
+- `ORDER_REQUEST_ID_INVALID`
+
+这些错误保留 Cart，但清除旧 Proposal、确认状态、requestId 和 frozen payload。
+
+### 7.2 Outcome Unknown
+
+网络或 timeout 可能发生在服务端写入之后。页面不会声称“订单未创建”，而是保留 Cart、Proposal、requestId 与 frozen payload，显示“重试确认下单”。重试不重新读取已经可能变化的 Cart，而是复用同一提交内容。
+
+### 7.3 Idempotency
+
+```text
+requestId
+ + canonical(clientId, items, expectedPreview, remark)
+ → SHA-256 requestFingerprint
+ → request_id_unique (unique=true, sparse=true)
+```
+
+- Same key + same fingerprint：返回首次持久化订单。
+- Same key + different fingerprint/clientId：`ORDER_IDEMPOTENCY_CONFLICT`。
+- check-then-insert 只能优化普通重试；并发唯一性最终由数据库 UNIQUE index 保证。
+
+## 8. Evaluation 与测试
+
+RAG 端到端评测使用21条知识与12条固定 Query：
+
+- Answerability Accuracy：11/12，91.67%。
+- Supported Answer Rate：5/6，83.33%。
+- Unsupported-domain Rejection：3/3，100%。
+- External-OOD Rejection：3/3，100%。
+- Retrieval Hit Rate：6/6 supported，100%。
+- Average Retrieval Recall@3：约80.83%。
+- Evidence Hit Rate：5/6 supported，83.33%。
+- Server Grounding Pass：12/12，100%。
+
+这是项目级小样本评测，不是生产 Benchmark。项目冻结时全部747项自动化测试通过，另有微信开发者工具、真实 uniCloud 数据库与管理入口验收记录。
+
+## 9. 信任边界
+
+| 输入或组件 | 信任方式 |
+| --- | --- |
+| LLM dishId / evidence ID | 白名单、当前上下文子集、数据库二次读取 |
+| LLM 自由文本 | 不作为菜单价格、状态或最终 RAG 事实 |
+| Tool name / arguments | Registry allowlist + JSON Schema + static mapping |
+| Client price / total | 不信任；服务端重新计价 |
+| Expected Preview | 仅作为用户确认预期，与服务端实时结果逐项比较 |
+| requestId | 幂等键，不是授权、认证或 orderNo |
+| clientId | 开发期隔离，不是正式身份认证 |
+
+## 10. Current Scope / Future Work
+
+- 单轮 RAG 与单次 Agent Task，没有 conversation memory。
+- RAG 不是 Agent Tool。
+- 21 chunks、12-query baseline，规模有限。
+- Pinia Cart、Pending Action 与未决提交恢复不跨小程序重启持久化。
+- 没有支付、库存事务、uni-id 或 exactly-once distributed transaction。
+- 没有生产规模 Vector DB、ANN、分布式检索和生产治理。
+
+下一步应先扩充评测与失败样本，再基于冻结 baseline 比较检索、Evidence Selection 和持久化恢复方案，而不是直接扩大 Agent 权限。
+
+## 11. 文档索引
+
+- [RAG V4 Summary](rag/V4_SUMMARY.md)
+- [RAG Answer Evaluation](rag/ANSWER_EVALUATION.md)
+- [Agent Loop](agent/AGENT_LOOP.md)
+- [Action Proposal](agent/ACTIONS.md)
+- [User Confirmation](agent/CONFIRMATION.md)
+- [Order Execution](agent/ORDER_EXECUTION.md)
+- [Order Idempotency](agent/ORDER_IDEMPOTENCY.md)
+- [Demo Guide](DEMO_GUIDE.md)
+- [Final Summary](FINAL_SUMMARY.md)
