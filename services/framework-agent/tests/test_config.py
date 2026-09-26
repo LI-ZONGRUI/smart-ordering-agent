@@ -1,6 +1,11 @@
 import pytest
 
-from app.config import FrameworkSettings, get_settings, require_model_settings
+from app.config import (
+    FrameworkSettings,
+    get_settings,
+    require_gateway_settings,
+    require_model_settings,
+)
 from app.errors import FrameworkError
 from app.llm import build_qwen_model
 
@@ -48,3 +53,50 @@ def test_qwen_adapter_uses_server_owned_non_streaming_config() -> None:
     assert model.streaming is False
     assert model.max_retries == 0
     assert "test-placeholder-only" not in repr(model)
+
+
+@pytest.mark.parametrize(
+    "url",
+    [
+        "",
+        "http://gateway.example.test/framework-gateway",
+        "https://gateway.example.test/other",
+        "https://gateway.example.test/framework-gateway/",
+        "https://user:password@gateway.example.test/framework-gateway",
+        "https://gateway.example.test/framework-gateway?debug=1",
+        "https://gateway.example.test/framework-gateway#fragment",
+        "file:///framework-gateway",
+        "https://localhost/framework-gateway",
+        "not-a-url",
+    ],
+)
+def test_gateway_url_is_strictly_validated(url: str) -> None:
+    settings = FrameworkSettings(
+        framework_gateway_url=url,
+        framework_gateway_secret="test-only-gateway-secret-at-least-32-chars",
+    )
+    with pytest.raises(FrameworkError, match="FRAMEWORK_CONFIG_MISSING"):
+        require_gateway_settings(settings)
+
+
+@pytest.mark.parametrize("secret", ["", "short", "x" * 257])
+def test_gateway_secret_contract_fails_closed(secret: str) -> None:
+    settings = FrameworkSettings(
+        framework_gateway_url="https://gateway.example.test/framework-gateway",
+        framework_gateway_secret=secret,
+    )
+    with pytest.raises(FrameworkError, match="FRAMEWORK_CONFIG_MISSING"):
+        require_gateway_settings(settings)
+
+
+def test_gateway_settings_normalize_and_redact_secret() -> None:
+    secret = "test-only-gateway-secret-at-least-32-chars"
+    settings = require_gateway_settings(
+        FrameworkSettings(
+            framework_gateway_url="  https://gateway.example.test/framework-gateway  ",
+            framework_gateway_secret=f"  {secret}  ",
+        )
+    )
+    assert settings.framework_gateway_url == "https://gateway.example.test/framework-gateway"
+    assert settings.framework_gateway_secret.get_secret_value() == secret
+    assert secret not in repr(settings)

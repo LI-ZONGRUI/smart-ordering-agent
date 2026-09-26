@@ -100,10 +100,6 @@ class FrameworkAgent:
 
 
 def build_production_agent(gateway: MenuGateway) -> FrameworkAgent:
-    """Build production orchestration with an explicitly supplied real gateway.
-
-    V7.1A deliberately has no production gateway implementation. Callers may not silently
-    substitute InMemoryMenuGateway; V7.1B will supply the cross-service adapter.
-    """
+    """Build production orchestration with an explicitly supplied real gateway."""
 
     return FrameworkAgent(model=build_qwen_model(), gateway=gateway)

@@ -6,15 +6,18 @@
 
 RAG 与 Ordering Agent 是两项独立能力：RAG 负责菜单知识问答，Agent 负责实时菜单 Tool 编排和购物车动作提案；当前没有把 `rag.answer()` 注册成 Agent Tool。
 
-V7.1A 另行建立了一个独立的 Python 3.11 + FastAPI + LangChain 本地框架服务。它已用
-离线模型完成真实 `create_agent` 多步编排测试，但尚未连接真实 Qwen、uniCloud 菜单或
-微信前端，也没有自定义 LangGraph 工作流；现有交易主链保持不变。详见
+V7.1A 另行建立了一个独立的 Python 3.11 + FastAPI + LangChain 框架服务。它已用
+离线模型完成真实 `create_agent` 多步编排测试；V7.1B-2 又通过正式
+`UniCloudHttpMenuGateway` 完成 Python 到真实 uniCloud 菜单的只读验收。真实 Qwen 尚未接入
+这条 LangChain 链路，微信前端也未接入，且没有自定义 LangGraph 工作流；现有交易主链保持不变。详见
 [Framework Agent Service](services/framework-agent/README.md)。
 
 V7.1B-1 已在 uniCloud 侧把三个只读菜单能力抽取为同一 Shared Domain，并新增 HMAC-SHA256
 认证的只读 Framework Gateway。该 Gateway 已通过真实 uniCloud URL 化、HMAC 和线上菜单数据
-验收，Native Agent 也完成抽取后的真实回归。Python HTTP Gateway Client 仍未实现，因此当前
-不能宣称 LangChain 已读取线上菜单。协议与验收记录见
+验收，Native Agent 也完成抽取后的真实回归。V7.1B-2 已在 Python 侧实现 HMAC v1 HTTP
+Gateway Client，通过完全离线的 MockTransport + LangChain Tool Loop 测试，并通过独立脚本
+完成 Python 到真实 Gateway 和线上菜单的三个只读操作验收。该验收没有调用 LangChain 或
+Qwen，因此仍不能宣称 real Qwen + LangChain + Gateway E2E 已完成。协议与验收记录见
 [Framework Gateway](docs/framework/FRAMEWORK_GATEWAY.md)。
 
 ## 核心亮点

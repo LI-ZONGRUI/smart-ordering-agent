@@ -74,12 +74,12 @@ def test_missing_config_fails_without_fake_fallback(
     assert response.status_code == 503
     assert response.json() == {
         "errCode": "FRAMEWORK_CONFIG_MISSING",
-        "errMsg": "模型服务配置不完整",
+        "errMsg": "服务配置不完整",
     }
     assert "DASHSCOPE" not in response.text
 
 
-def test_configured_production_path_still_never_falls_back_to_fixture(
+def test_production_path_requires_real_gateway_and_never_falls_back_to_fixture(
     client: TestClient, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     monkeypatch.setenv("DASHSCOPE_API_KEY", "test-placeholder-only")
@@ -88,8 +88,8 @@ def test_configured_production_path_still_never_falls_back_to_fixture(
     get_settings.cache_clear()
 
     response = client.post("/v1/agent/run", json={"query": "有柠檬茶吗？"})
-    assert response.status_code == 502
-    assert response.json()["errCode"] == "FRAMEWORK_TOOL_EXECUTION_FAILED"
+    assert response.status_code == 503
+    assert response.json()["errCode"] == "FRAMEWORK_CONFIG_MISSING"
     assert "fixture" not in response.text
     assert "柠檬茶" not in response.text
 

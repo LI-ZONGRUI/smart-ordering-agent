@@ -20,7 +20,23 @@ def query_invalid() -> FrameworkError:
 
 
 def config_missing() -> FrameworkError:
-    return FrameworkError("FRAMEWORK_CONFIG_MISSING", "模型服务配置不完整", 503)
+    return FrameworkError("FRAMEWORK_CONFIG_MISSING", "服务配置不完整", 503)
+
+
+def gateway_request_failed() -> FrameworkError:
+    return FrameworkError("FRAMEWORK_GATEWAY_REQUEST_FAILED", "菜单网关请求未完成", 502)
+
+
+def gateway_timeout() -> FrameworkError:
+    return FrameworkError("FRAMEWORK_GATEWAY_TIMEOUT", "菜单网关请求超时", 504)
+
+
+def gateway_response_invalid() -> FrameworkError:
+    return FrameworkError("FRAMEWORK_GATEWAY_RESPONSE_INVALID", "菜单网关返回格式无效", 502)
+
+
+def gateway_remote_error() -> FrameworkError:
+    return FrameworkError("FRAMEWORK_GATEWAY_REMOTE_ERROR", "菜单网关拒绝了请求", 502)
 
 
 def model_request_failed() -> FrameworkError:

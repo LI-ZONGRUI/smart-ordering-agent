@@ -143,7 +143,7 @@ X-Framework-Signature: <lowercase HMAC-SHA256 hex>
 
 The signed body hash is calculated from the **exact decoded HTTP body bytes** received by
 uniCloud. JSON is not parsed and reserialized for signing, so object key iteration is irrelevant.
-The future Python client must sign exactly the bytes it sends.
+The V7.1B-2 Python client signs exactly the bytes it sends.
 
 Canonical signing string v1:
 
@@ -274,15 +274,36 @@ Implemented, locally tested, and accepted on real uniCloud:
 - real Native Agent regression after Shared Domain extraction;
 - real URLized fail-closed authentication and valid HMAC requests;
 - real reads for all three allowed operations;
+- real Python `UniCloudHttpMenuGateway` reads through the deployed Gateway;
 - authenticated rejection of a non-allowlisted write operation.
 
 Not yet implemented or accepted:
 
-- Python `UniCloudHttpMenuGateway`;
-- real Python-to-uniCloud HTTP request;
 - real Qwen + Gateway end-to-end LangChain run;
 - persistent nonce replay cache;
 - custom LangGraph workflow.
+
+## Python Client Status
+
+V7.1B-2 implements `services/framework-agent/app/gateways/unicloud_http.py` and the separate
+deterministic signer in `app/gateways/signing.py`. The client uses `httpx.AsyncClient`, strict
+HTTPS configuration, compact UTF-8 body bytes, a fresh secure nonce per request and explicit
+timeouts. It validates the Gateway envelope and the basic result contract for each of the three
+allowed operations, then returns only the existing Python `MenuGateway` shapes.
+
+The Python client has passed offline `MockTransport` and real LangChain Tool Loop tests. It also
+completed real cloud acceptance through the deployed Gateway using `scripts.check_gateway`, which
+instantiates the production `UniCloudHttpMenuGateway` rather than a temporary HTTP client.
+
+The acceptance-time results were:
+
+- `search_menu("柠檬茶")`: `count=1`, returning `dish-4`, 柠檬茶, price 12 and `on_sale`;
+- `list_available_drinks()`: `count=1`, returning `dish-4`, 柠檬茶, price 12 and `on_sale`;
+- `get_dish_detail("dish-4")`: `found=true`, category `drink`, price 12, `on_sale`, spicy level 0,
+  description “清爽柠檬香气，适合搭配正餐。” and ingredients 红茶、柠檬.
+
+These are acceptance-time database facts, not permanent menu assertions. The script did not start
+LangChain or call Qwen, so real Qwen + LangChain + Gateway end-to-end acceptance remains pending.
 
 ## Platform References
 

@@ -19,7 +19,8 @@ POST /v1/agent/run
  → Qwen ChatOpenAI adapter (production only)
  → read-only Structured Tools
  → MenuGateway port
- → future UniCloudHttpMenuGateway (V7.1B)
+ → UniCloudHttpMenuGateway
+ → HMAC-authenticated uniCloud Framework Gateway
 ```
 
 `create_agent` brings LangGraph in as a transitive runtime dependency. V7.1A does not import or
@@ -48,6 +49,8 @@ Copy `.env.example` to an ignored local `.env` only when preparing a production 
 DASHSCOPE_API_KEY=
 LLM_BASE_URL=
 FRAMEWORK_AGENT_LLM_MODEL=qwen3.8-flash
+FRAMEWORK_GATEWAY_URL=
+FRAMEWORK_GATEWAY_SECRET=
 ```
 
 The app and `/health` import without these variables. They are checked only when the production
@@ -70,10 +73,16 @@ curl http://127.0.0.1:8000/health
 1–200 Unicode characters. Clients cannot select models, prompts, tools, temperature, base URLs,
 keys, or limits.
 
-V7.1A intentionally has no production `MenuGateway`. Therefore a production run first validates
-the Qwen configuration, then safely reports that the menu tool layer is unavailable. It never
-falls back to the in-memory fixture. V7.1B-1 has implemented the authenticated server-side
-Gateway, but the Python HTTP client remains pending for V7.1B-2.
+V7.1B-2 adds the production `UniCloudHttpMenuGateway`. It requires an HTTPS URL whose exact path
+is `/framework-gateway` and a separate 32–256 character Gateway secret. It rejects URL
+credentials, query strings, fragments, other schemes and other paths. Production configuration
+never falls back to `InMemoryMenuGateway`.
+
+The adapter serializes each `{operation, arguments}` payload once as compact UTF-8 JSON, signs and
+sends those exact bytes, and validates the response envelope and operation-specific data. One
+logical Tool invocation makes one HTTP request; there is no automatic retry. A fresh signed nonce
+is generated for every request. Explicit connect/read/write/pool timeouts are all below the
+FastAPI Agent's 20-second overall limit.
 
 ## HTTP contract
 
@@ -94,7 +103,11 @@ reasoning, raw model output, traces, keys, base URLs, or stack traces.
 | Error code | HTTP | Meaning |
 | --- | ---: | --- |
 | `FRAMEWORK_QUERY_INVALID` | 400 | Query contract failed |
-| `FRAMEWORK_CONFIG_MISSING` | 503 | Server model configuration is unavailable |
+| `FRAMEWORK_CONFIG_MISSING` | 503 | Required model or Gateway configuration is unavailable |
+| `FRAMEWORK_GATEWAY_REQUEST_FAILED` | 502 | Gateway transport or HTTP request failed |
+| `FRAMEWORK_GATEWAY_TIMEOUT` | 504 | Gateway request timed out |
+| `FRAMEWORK_GATEWAY_RESPONSE_INVALID` | 502 | Gateway response contract was invalid |
+| `FRAMEWORK_GATEWAY_REMOTE_ERROR` | 502 | Gateway safely rejected the operation |
 | `FRAMEWORK_MODEL_REQUEST_FAILED` | 502 | Upstream model request failed |
 | `FRAMEWORK_MODEL_RESPONSE_INVALID` | 502 | No valid final model answer |
 | `FRAMEWORK_TOOL_EXECUTION_FAILED` | 502 | Read-only menu tool failed |
@@ -150,6 +163,30 @@ overall timeout.
 All tests are offline. The fake chat model lives under `tests/`, never production code, and no
 test calls Model Studio, uniCloud, a database, or the WeChat backend.
 
+The V7.1B-2 integration test combines the real LangChain `create_agent`, real Structured Tools,
+real `UniCloudHttpMenuGateway`, and `httpx.MockTransport`. It verifies the two-request cola flow,
+HMAC headers and a different nonce per request without contacting the deployed Gateway.
+
+## Real Gateway acceptance
+
+Real Python-to-Gateway acceptance is complete. The accepted run used the production
+`UniCloudHttpMenuGateway` through the existing script after manually exporting
+`FRAMEWORK_GATEWAY_URL` and `FRAMEWORK_GATEWAY_SECRET` in an ignored local environment:
+
+```bash
+cd services/framework-agent
+.venv/bin/python -m scripts.check_gateway
+```
+
+The script calls only `search_menu("柠檬茶")`, `list_available_drinks()` and
+`get_dish_detail("dish-4")`. It does not start LangChain or call Qwen. Do not paste its secret,
+signature or nonce into logs or documentation.
+
+At acceptance time, search returned one `dish-4` 柠檬茶 at price 12 with `on_sale`; the available
+drinks call returned the same single item; detail returned `found=true`, category `drink`, spicy
+level 0, description “清爽柠檬香气，适合搭配正餐。” and ingredients 红茶、柠檬. These values
+record the menu state observed during acceptance and are not permanent menu guarantees.
+
 ## Docker
 
 The Dockerfile is a static Python 3.11 deployment starting point. `.dockerignore` excludes `.env`,
@@ -160,9 +197,11 @@ container deployment is claimed.
 
 - **V7.1A complete locally:** Python service, adapter, gateway port, read-only tools, real
   LangChain loop with an offline model, HTTP and safety tests.
-- **Not complete:** real Qwen acceptance, real Python-to-uniCloud menu integration and
-  service-auth client, remote deployment, frontend integration, and custom LangGraph orchestration.
+- **Not complete:** real Qwen + LangChain + Gateway end-to-end acceptance, Python service remote
+  deployment, frontend integration, and custom LangGraph orchestration.
 - **V7.1B-1 accepted on real uniCloud:** shared domain and authenticated server-side Gateway. The
-  Python service did not participate in that acceptance and still has no HTTP Gateway client.
-- **V7.1B-2:** Python `UniCloudHttpMenuGateway` and real read-only acceptance.
+  Python service did not participate in that acceptance.
+- **V7.1B-2 accepted against real uniCloud:** Python `UniCloudHttpMenuGateway`, HMAC v1 client,
+  response validation, safe errors, offline LangChain integration, and all three read-only
+  operations through the deployed Gateway and Shared Menu Domain.
 - **V7.2:** explicit LangGraph orchestration after the service boundary is stable.

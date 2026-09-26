@@ -14,8 +14,8 @@ from app.errors import (
     execution_timeout,
     internal_error,
     query_invalid,
-    tool_execution_failed,
 )
+from app.gateways.unicloud_http import build_menu_gateway
 from app.models import AgentRunRequest, AgentRunResponse
 
 AGENT_TIMEOUT_SECONDS = 20.0
@@ -23,20 +23,22 @@ AgentRunner = Callable[[str], Awaitable[AgentResult]]
 
 
 async def get_agent_runner() -> AgentRunner:
-    """Production dependency placeholder until V7.1B supplies a real menu gateway.
+    """Build one production agent run with one owned, reusable HTTP Gateway client."""
 
-    Configuration is checked lazily. A fixture gateway is intentionally never substituted.
-    """
+    require_model_settings()
+    gateway = build_menu_gateway()
+    agent = build_production_agent(gateway)
 
-    gateway = app.state.menu_gateway
-    if gateway is None:
-        require_model_settings()
-        raise tool_execution_failed()
-    return build_production_agent(gateway).run
+    async def run_and_close(query: str) -> AgentResult:
+        try:
+            return await agent.run(query)
+        finally:
+            await gateway.aclose()
+
+    return run_and_close
 
 
 app = FastAPI(title="framework-agent", version="0.1.0")
-app.state.menu_gateway = None
 app.state.agent_runner_provider = get_agent_runner
 
 

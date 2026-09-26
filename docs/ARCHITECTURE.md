@@ -10,15 +10,16 @@
 
 RAG 与 Agent 当前没有互相调用；`rag.answer()` 没有注册为 Agent Tool。购物车和订单副作用也不由 LLM 直接执行。
 
-V7.1A 在现有系统旁新增独立的 Python FastAPI + LangChain 本地框架服务。它通过
-`MenuGateway` 端口预留未来只读接入，当前只使用测试 fixture 完成离线编排验证。它尚未
-连接真实 uniCloud、Qwen 或微信端，不拥有数据库或交易职责，也没有显式自定义 LangGraph
-流程。
+V7.1A 在现有系统旁新增独立的 Python FastAPI + LangChain 框架服务。它通过
+`MenuGateway` 端口隔离菜单来源，并使用测试 fixture 完成离线编排验证。V7.1B-2 的正式
+`UniCloudHttpMenuGateway` 已完成真实 uniCloud 只读接入验收；真实 Qwen 与微信端仍未接入
+这条 Python 链路。该服务不拥有数据库或交易职责，也没有显式自定义 LangGraph 流程。
 
 V7.1B-1 已把 Native Agent 的三个只读菜单能力抽取到 uniCloud Shared Menu Domain，并让
 Native Agent 与经过 HMAC-SHA256 认证的 URL 化 Framework Gateway 复用同一实现。Shared
-Domain、Gateway 和真实 uniCloud 菜单读取均已完成云端验收；Python 服务尚未实现
-`UniCloudHttpMenuGateway`，因此仍只使用 `InMemoryMenuGateway`，没有接入这条真实链路。
+Domain、Gateway 和真实 uniCloud 菜单读取均已完成云端验收。V7.1B-2 已在 Python 服务中
+实现 `UniCloudHttpMenuGateway`，并通过正式 HMAC/HTTPS 路径完成三个只读操作的真实云端
+验收。自动测试继续使用 `InMemoryMenuGateway` 或 `httpx.MockTransport`，不会访问远程服务。
 
 ## 2. 分层架构
 
@@ -107,13 +108,12 @@ Native Agent ───────────────┐
                             ├─ Shared Menu Domain ── Real uniCloud DB
 Framework Gateway ─────────┘
 
-Local signed acceptance client ── HTTPS + HMAC ── Framework Gateway
-
-Python LangChain Service ── MenuGateway ── InMemoryMenuGateway only
+Python LangChain Service ── MenuGateway ── UniCloudHttpMenuGateway
+        └──────────────────── HTTPS + HMAC ── Framework Gateway
 ```
 
-V7.1B-2 才会实现 Python `UniCloudHttpMenuGateway`。当前架构不把 Python 服务连接到
-Framework Gateway 或数据库，以免误示 Python 端真实集成已经完成。
+Python Adapter 与协议已经实现并完成真实 Gateway 验收。验收脚本没有进入 LangChain 或
+调用 Qwen，所以该结果只证明 Python HTTP Adapter 的只读链路，不代表真实模型 E2E 已完成。
 
 ### Client Layer
 

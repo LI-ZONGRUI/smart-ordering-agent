@@ -24,12 +24,11 @@ Independent Python framework service (V7.1A local only)
   MenuGateway port
 ```
 
-V7.1B-1 now provides the server-side shared read-only menu domain and authenticated uniCloud
-`framework-gateway`, and that server-side boundary has passed real uniCloud URLized HTTP, HMAC,
-allowlist, and live-menu acceptance. The Python `UniCloudHttpMenuGateway` client is still not
-implemented, so no real Python-to-uniCloud HTTP integration or acceptance is claimed. When
-V7.1B-2 adds that client, the Python service will not access uniCloud collections or copy database
-rules directly.
+V7.1B-1 provides the server-side shared read-only menu domain and authenticated uniCloud
+`framework-gateway`, and that server-side boundary passed real cloud acceptance. V7.1B-2 now
+implements `UniCloudHttpMenuGateway` without accessing collections or copying database rules.
+Its signing and HTTP path are fully offline-tested and have completed real Python-to-uniCloud
+acceptance for all three read-only operations.
 
 ## MenuGateway port
 
@@ -44,6 +43,16 @@ the existing Native Agent. This keeps Tool schemas stable while adapters change.
 
 `InMemoryMenuGateway` is a deterministic offline fixture for local tests and demos. Its two menu
 records are not production data. The production dependency path has no fixture fallback.
+
+`UniCloudHttpMenuGateway` is the production adapter. It validates an exact HTTPS
+`/framework-gateway` URL, signs compact raw JSON bytes with HMAC v1, sends one request per Tool
+invocation, and reduces the remote response to the existing `MenuGateway` result types. HTTP
+headers, signatures, remote bodies and transport details do not enter LangChain Tool results.
+
+Gateway failures map to stable framework errors: request/HTTP failures, timeout, invalid response
+and safe remote rejection. Raw URL, secret, signature, cookies and upstream error content are not
+included. Automatic retry is intentionally absent; a future retry would require a new timestamp,
+nonce and signature for every attempt.
 
 ## Trust and transaction boundaries
 
@@ -84,8 +93,11 @@ recursion limit bounds the agent cycle and FastAPI applies an overall 20-second 
 ### V7.1B
 
 - **V7.1B-1 accepted on real uniCloud:** shared menu domain and authenticated read-only server Gateway.
-- **V7.1B-2 pending:** add `UniCloudHttpMenuGateway` without changing LangChain Tool contracts.
-- Later validate Qwen and real menu reads in a controlled environment.
+- **V7.1B-2 accepted against real uniCloud:** `UniCloudHttpMenuGateway`, HMAC v1, strict response
+  validation, safe errors, MockTransport LangChain integration, and real reads through the
+  deployed Gateway for all three operations.
+- Later validate real Qwen + LangChain + `UniCloudHttpMenuGateway` end to end in a controlled
+  environment.
 
 ### V7.2
 
