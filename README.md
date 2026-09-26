@@ -6,6 +6,11 @@
 
 RAG 与 Ordering Agent 是两项独立能力：RAG 负责菜单知识问答，Agent 负责实时菜单 Tool 编排和购物车动作提案；当前没有把 `rag.answer()` 注册成 Agent Tool。
 
+V7.1A 另行建立了一个独立的 Python 3.11 + FastAPI + LangChain 本地框架服务。它已用
+离线模型完成真实 `create_agent` 多步编排测试，但尚未连接真实 Qwen、uniCloud 菜单或
+微信前端，也没有自定义 LangGraph 工作流；现有交易主链保持不变。详见
+[Framework Agent Service](services/framework-agent/README.md)。
+
 ## 核心亮点
 
 1. **Evidence-grounded RAG**：模型只选择可信 evidence ID，服务器验证后直接使用知识原文渲染答案，避免模型自由改写事实。

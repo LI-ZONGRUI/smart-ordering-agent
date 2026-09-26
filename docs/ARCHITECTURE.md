@@ -10,6 +10,11 @@
 
 RAG 与 Agent 当前没有互相调用；`rag.answer()` 没有注册为 Agent Tool。购物车和订单副作用也不由 LLM 直接执行。
 
+V7.1A 在现有系统旁新增独立的 Python FastAPI + LangChain 本地框架服务。它通过
+`MenuGateway` 端口预留未来只读接入，当前只使用测试 fixture 完成离线编排验证。它尚未
+连接真实 uniCloud、Qwen 或微信端，不拥有数据库或交易职责，也没有显式自定义 LangGraph
+流程。
+
 ## 2. 分层架构
 
 ```mermaid
@@ -31,6 +36,13 @@ graph TB
     REC[Qwen Recommendation]
     RAG[RAG Pipeline]
     AG[Ordering Agent<br/>Native Function Calling]
+  end
+
+  subgraph FutureFramework[V7 Independent Framework Service - local foundation]
+    FASTAPI[Python 3.11 + FastAPI]
+    LC[LangChain create_agent]
+    GW[MenuGateway Port]
+    FASTAPI --> LC --> GW
   end
 
   subgraph Validation[Tool / Validation Layer]
@@ -82,6 +94,9 @@ graph TB
   PRICE --> D
   PRICE --> O
 ```
+
+未来接入方向留到 V7.1B：Python 服务将通过经过认证的只读网关访问现有业务核心；当前
+架构图不把它连接到数据库，以免误示已经完成真实集成。
 
 ### Client Layer
 

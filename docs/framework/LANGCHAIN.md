@@ -4,6 +4,9 @@
 
 **Blocked by deployment constraints.**
 
+> This status records the V7.0 **LangChain-inside-uniCloud** option. The independent Python
+> service adopted afterward is documented in the V7 Architecture Decision section below.
+
 V7.1 在正式代码创建前触发 Deployment Gate，因此本阶段没有创建 framework-agent、没有安装仓库依赖、没有修改 Native Agent，也没有部署或调用真实 Qwen / uniCloud。
 
 阻塞原因有三项：
@@ -185,3 +188,58 @@ User Query
 - DCloud uniCloud 云函数与运行时、10 MB 包限制：<https://doc.dcloud.net.cn/uniCloud/cf-functions>
 - LangChain JavaScript createAgent reference：<https://reference.langchain.com/javascript/langchain/index/createAgent>
 - LangChain OpenAI integration reference：<https://reference.langchain.com/javascript/langchain-openai>
+
+## V7 Architecture Decision
+
+The V7.0 conclusion above remains valid for **LangChain inside uniCloud**. V7.1A therefore adopts
+an adjacent deployment boundary instead of trying to bypass the measured package limit:
+
+```text
+Existing WeChat / uniCloud Business Core
+  +
+Independent Python 3.11 FastAPI Framework Service
+  → LangChain create_agent
+  → Qwen ChatOpenAI adapter
+  → MenuGateway read-only port
+```
+
+The Python service is isolated under `services/framework-agent/`. It does not change or replace
+the Native Agent, menu, RAG, orders, Pinia, transaction validation, or database ownership.
+
+## V7.1A Status
+
+**Python LangChain Agent foundation implemented locally.**
+
+Completed locally:
+
+- FastAPI `/health` and narrow `POST /v1/agent/run` contracts.
+- Lazy Qwen `ChatOpenAI` adapter using server environment variables.
+- `MenuGateway` port and explicitly test-only `InMemoryMenuGateway`.
+- Three strict read-only tools: `search_menu`, `list_available_drinks`, and
+  `get_dish_detail`.
+- Real `langchain.agents.create_agent` orchestration tested with an offline scripted
+  tool-calling model.
+- Multi-step test where the model observes a zero-result ToolMessage before choosing
+  `list_available_drinks`; there is no application fallback branch.
+- Finite graph recursion and overall service timeout, with stable safe error mapping.
+
+Not completed in V7.1A:
+
+- No real Qwen call or Model Studio acceptance.
+- No uniCloud HTTP gateway or real menu read.
+- No service-to-service authentication or remote deployment.
+- No WeChat frontend integration.
+- No cart, order, payment, database write, or RAG routing.
+
+The Python dependency tree includes `langgraph` because current LangChain uses it as a
+**transitive runtime dependency** for `create_agent`. This project does not directly import or
+implement `StateGraph`, custom graph state, nodes, edges, conditional routing, or any explicit
+LangGraph workflow. Explicit orchestration remains planned for V7.2.
+
+Detailed design and local operation are documented in
+[PYTHON_FRAMEWORK_SERVICE.md](PYTHON_FRAMEWORK_SERVICE.md) and the service README.
+
+Python references used for V7.1A:
+
+- LangChain Python Agents: <https://docs.langchain.com/oss/python/langchain/agents>
+- LangChain OpenAI-compatible chat integration: <https://docs.langchain.com/oss/python/integrations/chat/openai>
