@@ -232,9 +232,9 @@ Not completed in V7.1A:
 - No cart, order, payment, database write, or RAG routing.
 
 The Python dependency tree includes `langgraph` because current LangChain uses it as a
-**transitive runtime dependency** for `create_agent`. This project does not directly import or
-implement `StateGraph`, custom graph state, nodes, edges, conditional routing, or any explicit
-LangGraph workflow. Explicit orchestration remains planned for V7.2.
+**transitive runtime dependency** for `create_agent`. At the V7.1A milestone, the project did not
+directly import or implement `StateGraph`, custom graph state, nodes, edges, conditional routing,
+or an explicit LangGraph workflow. V7.2A later adds that project-owned orchestration.
 
 Detailed design and local operation are documented in
 [PYTHON_FRAMEWORK_SERVICE.md](PYTHON_FRAMEWORK_SERVICE.md) and the service README.
@@ -271,6 +271,9 @@ fallback`, and the final real rerun produced `call → result → call → resul
 Tool-result-driven sequential replanning in that controlled case, not a general autonomous Agent
 guarantee.
 
-LangGraph remains only a transitive runtime dependency of LangChain. The project still has no
-custom `StateGraph`, state, nodes, edges, router, checkpointer, thread memory or conversation
-history. Explicit LangGraph design belongs to V7.2.
+V7.2A now adds a direct LangGraph dependency and a project-owned top-level `StateGraph` with
+minimal typed state, nodes, edges and conditional routing. The existing LangChain `create_agent`
+continues to own the menu Tool loop inside the graph's `menu_agent` node. No checkpointer, thread
+memory or conversation history has been added. The explicit graph and all three routes are covered
+by offline tests, and controlled local FastAPI acceptance has passed for smalltalk, a real Qwen
+menu query through the authenticated Gateway, and the deterministic read-only boundary.

@@ -15,17 +15,22 @@ an adjacent framework layer, not a replacement for menu, order, payment, or tran
 ```text
 POST /v1/agent/run
  → validate query
- → LangChain create_agent
- → Qwen ChatOpenAI adapter (production only)
- → read-only Structured Tools
- → MenuGateway port
- → UniCloudHttpMenuGateway
- → HMAC-authenticated uniCloud Framework Gateway
+ → project-owned LangGraph StateGraph
+ → route_request
+    ├─ menu_query → existing LangChain create_agent → read-only Structured Tools
+    ├─ smalltalk → deterministic response
+    └─ unsupported_action → deterministic read-only boundary
+ → normalize_result
+ → unchanged public response
 ```
 
-`create_agent` brings LangGraph in as a transitive runtime dependency. V7.1A does not import or
-implement `StateGraph`, custom state, nodes, edges, conditional routing, or any other explicit
-LangGraph workflow. That work belongs to V7.2.
+V7.2A directly depends on and imports LangGraph 1.2.12. The project now defines its own
+`StateGraph`, typed state, nodes, edges and conditional routing. LangGraph owns the top-level
+workflow; the accepted LangChain `create_agent` loop still owns Qwen Tool selection, Tool Result
+observation and replanning inside `menu_agent`.
+
+**V7.2A Explicit LangGraph StateGraph Foundation is complete and has passed controlled local
+FastAPI acceptance through the formal endpoint.**
 
 ## Local setup
 
@@ -148,6 +153,32 @@ search_menu("可乐")
 There is no `if count == 0` fallback in production Python code. The second call comes from the
 next model decision after observing the first ToolMessage.
 
+## Explicit LangGraph workflow
+
+The project-owned workflow is defined under `app/graph/`:
+
+```text
+START
+ → route_request
+ → menu_query → menu_agent ───────────────┐
+ → smalltalk → smalltalk_response ────────┼→ normalize_result → END
+ → unsupported_action → readonly_boundary ┘
+```
+
+`FrameworkGraphState` contains only `query`, `route`, `answer` and `completed`. It does not store
+keys, Gateway secrets, prompts, model reasoning, raw model responses or Tool messages. The first
+router is intentionally deterministic and small: exact greetings use the smalltalk branch,
+write-oriented cart/order/payment requests use the read-only boundary, and remaining requests use
+the existing menu Agent. This is an orchestration foundation, not a complete NLU classifier.
+
+There is no checkpointer, `thread_id`, conversation memory or multi-turn history. The public
+FastAPI contract does not expose the selected route or graph state. Inspect the compiled graph
+offline without executing Qwen or Gateway calls:
+
+```bash
+.venv/bin/python -m scripts.check_graph
+```
+
 Execution uses a finite LangChain graph recursion limit of 13. This bounds model/tool cycles; it
 is not described as exactly five decisions or eight tool calls. FastAPI also applies a 20-second
 overall timeout.
@@ -198,6 +229,31 @@ the first result. No program fallback was added.
 The remaining cases verified a one-Tool lemon-tea lookup, a zero-Tool greeting, sold-out sour-plum
 drink wording, refusal to modify the cart, and one basic prompt-injection check. These controlled
 results do not constitute a general autonomous-planning or complete security guarantee.
+
+## V7.2A real FastAPI acceptance
+
+The formal `POST /v1/agent/run` endpoint was run locally with the production graph wiring and
+ignored local environment settings:
+
+- `你好` followed `smalltalk → smalltalk_response → normalize_result → END` and returned the fixed
+  menu-assistant introduction without a menu Tool or database read.
+- `有可乐吗？没有的话推荐点别的喝的。` followed `menu_query → menu_agent`; the existing
+  LangChain/Qwen Agent used the authenticated Gateway and current uniCloud menu facts, then
+  returned the cautious zero-search wording and the acceptance-time available lemon tea at ¥12.
+- `把柠檬茶加两杯到购物车` followed
+  `unsupported_action → readonly_boundary → normalize_result → END` and returned the fixed
+  read-only refusal without a cart, order, payment Tool or write side effect.
+
+All three successful responses retained the narrow public contract: `errCode`, `query`, `answer`
+and `completed`. They exposed no route, graph state, node history, trace, Tool calls, reasoning or
+raw messages. This acceptance establishes the observed routes and menu path; it is not a claim of
+multi-turn memory or general autonomous workflow behavior.
+
+During setup, `FRAMEWORK_CONFIG_MISSING` was traced to locally present but invalid model and
+Gateway URL values: neither parsed as HTTPS with a host. Correcting the ignored local environment
+values made `FrameworkSettings` validation and the formal endpoint succeed. This was local
+acceptance environment misconfiguration, not a LangGraph, FastAPI or Pydantic defect. No real URL
+or secret is recorded here.
 
 Acceptance details:
 
@@ -252,8 +308,8 @@ container deployment is claimed.
 
 - **V7.1A complete locally:** Python service, adapter, gateway port, read-only tools, real
   LangChain loop with an offline model, HTTP and safety tests.
-- **Not complete:** Python service remote deployment, frontend integration, multi-turn memory and
-  custom LangGraph orchestration.
+- **Not complete:** Python service remote deployment, frontend integration, RAG/Native Agent
+  routing, multi-turn memory and checkpointer.
 - **V7.1B-1 accepted on real uniCloud:** shared domain and authenticated server-side Gateway. The
   Python service did not participate in that acceptance.
 - **V7.1B-2 accepted against real uniCloud:** Python `UniCloudHttpMenuGateway`, HMAC v1 client,
@@ -261,4 +317,6 @@ container deployment is claimed.
   operations through the deployed Gateway and Shared Menu Domain.
 - **V7.1C accepted end to end:** real Qwen + LangChain `create_agent` + Structured Tools + real
   authenticated Gateway/menu data, including one Tool-result-driven sequential replanning case.
-- **V7.2:** explicit LangGraph orchestration after the service boundary is stable.
+- **V7.2A accepted through the local formal FastAPI endpoint:** explicit project-owned
+  `StateGraph`, minimal typed state, conditional routing, normalized output, offline tests and the
+  three controlled route cases described above.

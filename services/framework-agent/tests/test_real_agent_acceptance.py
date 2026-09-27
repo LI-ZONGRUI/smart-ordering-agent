@@ -11,7 +11,7 @@ import app.gateways.unicloud_http as gateway_module
 import app.main as main_module
 import app.tools.menu as menu_tools_module
 import app.trace as trace_module
-from app.agent import SYSTEM_PROMPT, FrameworkAgent, build_production_agent
+from app.agent import SYSTEM_PROMPT, AgentResult, FrameworkAgent, build_production_agent
 from app.config import FrameworkSettings, get_settings
 from app.errors import FrameworkError
 from app.gateways.memory import InMemoryMenuGateway
@@ -282,9 +282,10 @@ async def test_production_provider_uses_real_http_gateway(
     monkeypatch.setattr(main_module, "build_menu_gateway", lambda: gateway)
 
     class FakeAgent:
-        async def run(self, query: str) -> object:
+        async def run(self, query: str, *, include_trace: bool = False) -> AgentResult:
+            assert include_trace is False
             observed["query"] = query
-            return object()
+            return AgentResult(query=query, answer="菜单回答", completed=True)
 
     def fake_agent_builder(value: object) -> FakeAgent:
         observed["gateway"] = value
@@ -293,10 +294,10 @@ async def test_production_provider_uses_real_http_gateway(
     monkeypatch.setattr(main_module, "build_production_agent", fake_agent_builder)
     runner = await main_module.get_agent_runner()
     try:
-        await runner("你好")
+        await runner("有柠檬茶吗？")
     finally:
         await gateway.aclose()
-    assert observed == {"gateway": gateway, "query": "你好"}
+    assert observed == {"gateway": gateway, "query": "有柠檬茶吗？"}
 
 
 def test_no_native_agent_delegation_or_programmed_fallback() -> None:

@@ -79,10 +79,19 @@ pytest behavior.
 
 ## LangGraph boundary
 
-The installed LangChain version includes LangGraph as a transitive agent runtime dependency.
-This repository has no explicit LangGraph implementation in V7.1A: no `StateGraph`, custom graph
-state, nodes, edges, conditional edges, router, or graph persistence is defined. Explicit
-LangGraph orchestration is reserved for V7.2.
+V7.1 used LangGraph only through LangChain's agent runtime. V7.2A now declares LangGraph 1.2.12 as
+a direct dependency and defines a project-owned `StateGraph` under `app/graph/`. Its minimal typed
+state contains `query`, `route`, `answer` and `completed`; conditional edges route requests to the
+existing menu Agent, deterministic smalltalk, or a deterministic read-only boundary. Every branch
+passes through `normalize_result` before `END`.
+
+The menu node delegates to the accepted `FrameworkAgent`; it does not call the Gateway directly
+or replace the inner LangChain Tool loop. There is no checkpointer, thread ID, conversation memory,
+multi-turn history, RAG routing or Native Agent delegation. The formal HTTP response still omits
+route, graph state, trace and messages.
+
+**V7.2A is complete and has passed controlled local acceptance through the formal FastAPI
+endpoint, including smalltalk, the real Qwen menu path and the deterministic read-only boundary.**
 
 ## Failure and execution controls
 
@@ -112,8 +121,13 @@ recursion limit bounds the agent cycle and FastAPI applies an overall 20-second 
 - This proves the observed single-turn cases, not a general autonomous-planning or production
   security guarantee. Automated tests remain fully offline.
 
-### V7.2
+### V7.2A
 
-- Introduce explicit LangGraph state and routing only after the gateway boundary is stable.
+- Explicit LangGraph state and conditional top-level routing are implemented and accepted through
+  the formal local FastAPI endpoint.
+- Keep the accepted LangChain menu Tool loop inside the `menu_agent` node.
+- The controlled menu case reached real Qwen, the authenticated Gateway and current uniCloud menu
+  data. This is local integration acceptance, not remote service deployment or a production-grade
+  autonomous workflow claim.
 - Preserve uniCloud ownership of facts and transactions.
 - Keep write effects behind deterministic validation and explicit user confirmation.

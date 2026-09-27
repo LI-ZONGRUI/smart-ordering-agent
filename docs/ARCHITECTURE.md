@@ -14,7 +14,10 @@ V7.1A 在现有系统旁新增独立的 Python FastAPI + LangChain 框架服务�
 `MenuGateway` 端口隔离菜单来源，并使用测试 fixture 完成离线编排验证。V7.1B-2 的正式
 `UniCloudHttpMenuGateway` 已完成真实 uniCloud 只读接入验收。V7.1C 又完成真实 Qwen、
 LangChain `create_agent`、Structured Tools、Gateway 和真实菜单数据的端到端验收；微信端仍未
-接入这条 Python 链路。该服务不拥有数据库或交易职责，也没有显式自定义 LangGraph 流程。
+接入这条 Python 链路。V7.2A 已实现显式自定义 LangGraph `StateGraph`：顶层图负责路由和
+结果归一化，现有 LangChain Agent 继续负责菜单 Tool Loop。smalltalk、真实 Qwen 菜单查询和
+只读拒绝均已通过本地 FastAPI 正式入口验收。该图没有引入记忆、checkpointer 或多轮历史，
+该服务也不拥有数据库或交易职责。
 
 V7.1B-1 已把 Native Agent 的三个只读菜单能力抽取到 uniCloud Shared Menu Domain，并让
 Native Agent 与经过 HMAC-SHA256 认证的 URL 化 Framework Gateway 复用同一实现。Shared
@@ -45,11 +48,15 @@ graph TB
     AG[Ordering Agent<br/>Native Function Calling]
   end
 
-  subgraph FutureFramework[V7 Independent Python Framework Service]
+  subgraph FrameworkService[V7 Independent Python Framework Service]
     FASTAPI[Python 3.11 + FastAPI]
+    LG[LangGraph StateGraph<br/>Top-level Routing]
     LC[LangChain create_agent]
     GW[MenuGateway Port]
-    FASTAPI --> LC --> GW
+    SMALL[Smalltalk / Read-only Boundary]
+    FASTAPI --> LG
+    LG --> LC --> GW
+    LG --> SMALL
   end
 
   subgraph Validation[Tool / Validation Layer]

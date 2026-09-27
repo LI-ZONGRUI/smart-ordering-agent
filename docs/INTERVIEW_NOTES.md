@@ -2,7 +2,7 @@
 
 ## 30 秒项目介绍
 
-我用 Vue 3、uni-app、Pinia 和 uniCloud 做了一个微信智能点餐项目。除了菜单、购物车和云端订单闭环，还实现了 Evidence-first RAG、原生 Function Calling Ordering Agent，以及独立的 Python + FastAPI + LangChain 只读菜单 Agent。模型负责开放式理解、证据或工具选择；价格、状态、副作用、订单确认和幂等由服务器与用户确认控制。当前 JS 808 项、Python 97 项自动化测试通过，并完成真实微信端、uniCloud 与 Qwen/LangChain 端到端验收。
+我用 Vue 3、uni-app、Pinia 和 uniCloud 做了一个微信智能点餐项目。除了菜单、购物车和云端订单闭环，还实现了 Evidence-first RAG、原生 Function Calling Ordering Agent，以及独立的 Python + FastAPI + LangChain + LangGraph 只读菜单 Agent。模型负责开放式理解、证据或工具选择；价格、状态、副作用、订单确认和幂等由服务器与用户确认控制。当前 JS 808 项、Python 118 项自动化测试通过，并完成真实微信端、uniCloud 与 Qwen/LangChain/LangGraph 链路验收。
 
 ## 90 秒项目介绍
 
@@ -16,6 +16,11 @@ Ordering Agent 使用原生 Function Calling、Tool Registry、Executor allowlis
 通过 HMAC Gateway 读取相同的真实菜单。最终真实 trace 为
 `search_menu → result(count=0) → list_available_drinks → result`，证明该案例中 Qwen 根据
 Tool Result 做了下一次模型决策；它没有购物车或订单 Tool，也没有接入微信 UI。
+
+V7.2A 在这条链路外增加项目自有的 LangGraph `StateGraph`。LangGraph 负责顶层 state、路由和
+节点流转；进入 `menu_agent` 后，现有 LangChain Agent 继续负责 Qwen Tool Calling、
+ToolMessage observation 与 sequential replanning。这样没有为了展示 LangGraph 而重写已验收
+的 Tool Agent。
 
 ## 3 分钟项目介绍
 
@@ -42,6 +47,10 @@ V7 还增加了一条独立 Python LangChain 只读链路。较早一次真实�
 `if count == 0` fallback。最终重测得到 `call → result → call → result`，才把该案例记录为
 Tool-result-driven sequential replanning。
 
+V7.2A 进一步补上项目级显式 Workflow：`route_request` 通过 Conditional Edges 把请求分到
+菜单查询、确定性闲聊或只读拒绝，再统一进入 `normalize_result`。菜单分支只是适配现有
+FrameworkAgent；LangGraph 决定“走哪条业务路径”，LangChain 决定“菜单查询中如何调用 Tool”。
+
 ### 4. 订单与幂等
 
 Checkout 完全走确定性服务端逻辑，不经过 Qwen。Preview 先校价，用户确认后 Create 再校价，并逐行比较 expected preview。真实测试中，柠檬茶从 12 元变成 13 元后，系统返回 `ORDER_CONFIRMATION_STALE`，没有静默创建 26 元订单。
@@ -59,6 +68,9 @@ Checkout 完全走确定性服务端逻辑，不经过 Qwen。Preview 先校价�
 3. **Intelligence**：推荐、RAG、Ordering Agent 三项能力。
 4. **Validation**：Tool Registry、Executor、Pending Action、订单计价与确认。
 5. **Backend / Data**：uniCloud 云对象与 categories、dishes、knowledge_chunks、orders。
+
+独立 Python 服务中再区分两层：LangGraph 负责顶层 Workflow Orchestration，LangChain
+`create_agent` 负责菜单分支内部的 Tool Calling Loop。
 
 RAG 与 Agent 共享真实菜单数据，但当前没有调用关系；`rag.answer()` 不是 Agent Tool。
 
@@ -172,6 +184,13 @@ requestId 是客户端为一次提交意图生成的幂等键；orderNo 是订�
 
 知识只有 21 chunks，评测只有 12 query；RAG 与 Agent 均无多轮记忆；购物车和 Pending Action 不持久化；未决订单提交状态不跨重启恢复；没有正式登录、支付、库存事务、exactly-once 分布式事务或生产规模向量检索。
 
+### 27. 为什么同时使用 LangGraph 和 LangChain？
+
+V7.1C 已有稳定的 LangChain Tool Agent，但缺少项目级显式 Workflow。V7.2A 用 LangGraph
+负责请求路由、Graph State 和节点流转，菜单节点继续复用 LangChain `create_agent`。这样把
+“走哪条业务路径”和“菜单查询中如何调用 Tool”分开，也避免重写真实验收过的 Agent Loop。
+当前图没有 RAG/Native Agent 路由、checkpointer、conversation memory 或多轮状态。
+
 ## 如果再给两周
 
 1. 扩大并版本化独立评测集，加入更多同义问法、困难拒答和回归样本。
@@ -189,5 +208,7 @@ requestId 是客户端为一次提交意图生成的幂等键；orderNo 是订�
 - 未决 requestId 与 frozen payload 不跨刷新或小程序重启恢复。
 - 没有支付、库存事务或 exactly-once distributed transaction。
 - 没有 production-scale Vector DB。
+- LangGraph 当前只负责单轮顶层路由；没有 RAG/Native Agent integration、checkpointer、
+  thread memory 或 conversation history。
 
 这些边界说明当前工程验证覆盖到哪里，也给出了下一步可以被独立评测的方向。

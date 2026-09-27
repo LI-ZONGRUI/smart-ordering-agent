@@ -48,7 +48,8 @@ Rules:
 """
 
 # LangChain create_agent is backed by a graph runtime. This finite recursion limit bounds
-# model/tool cycles without adding custom LangGraph nodes, state, edges, or routing.
+# model/tool cycles inside the menu_agent node. The project-owned top-level
+# LangGraph routing workflow is defined separately under app.graph.
 AGENT_RECURSION_LIMIT = 13
 
 
@@ -86,8 +87,9 @@ class FrameworkAgent:
         except (openai.APIError, httpx.HTTPError, ConnectionError, TimeoutError):
             raise model_request_failed() from None
         except Exception as error:
-            # LangChain exposes recursion exhaustion from its internal runtime. Avoid importing
-            # or programming against LangGraph APIs in this V7.1A foundation.
+            # LangChain exposes recursion exhaustion from its internal runtime. The inner Agent
+            # keeps using the accepted LangChain invocation API; the project-owned top-level
+            # LangGraph does not change this loop or require another private exception import.
             if type(error).__name__ == "GraphRecursionError":
                 raise max_steps_exceeded() from None
             raise internal_error() from None

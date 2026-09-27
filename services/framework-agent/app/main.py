@@ -16,6 +16,7 @@ from app.errors import (
     query_invalid,
 )
 from app.gateways.unicloud_http import build_menu_gateway
+from app.graph import build_framework_workflow
 from app.models import AgentRunRequest, AgentRunResponse
 
 AGENT_TIMEOUT_SECONDS = 20.0
@@ -27,11 +28,16 @@ async def get_agent_runner() -> AgentRunner:
 
     require_model_settings()
     gateway = build_menu_gateway()
-    agent = build_production_agent(gateway)
+    try:
+        agent = build_production_agent(gateway)
+        workflow = build_framework_workflow(agent)
+    except Exception:
+        await gateway.aclose()
+        raise
 
     async def run_and_close(query: str) -> AgentResult:
         try:
-            return await agent.run(query)
+            return await workflow.run(query)
         finally:
             await gateway.aclose()
 

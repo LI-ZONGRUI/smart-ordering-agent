@@ -45,6 +45,8 @@ def test_valid_query_is_trimmed_and_response_is_narrow(client: TestClient) -> No
     assert "trace" not in response.text
     assert "messages" not in response.text
     assert "prompt" not in response.text
+    assert "route" not in response.text
+    assert "graph" not in response.text
 
 
 @pytest.mark.parametrize("query", ["", "   ", 7, None, "字" * 201])
