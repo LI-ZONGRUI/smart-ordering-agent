@@ -2,7 +2,7 @@
 
 ## 30 秒项目介绍
 
-我用 Vue 3、uni-app、Pinia 和 uniCloud 做了一个微信智能点餐项目。除了菜单、购物车和云端订单闭环，还实现了 Evidence-first RAG、原生 Function Calling Ordering Agent，以及独立的 Python + FastAPI + LangChain + LangGraph 只读菜单 Agent。模型负责开放式理解、证据或工具选择；价格、状态、副作用、订单确认和幂等由服务器与用户确认控制。当前 JS 808 项、Python 118 项自动化测试通过，并完成真实微信端、uniCloud 与 Qwen/LangChain/LangGraph 链路验收。
+我用 Vue 3、uni-app、Pinia 和 uniCloud 做了一个微信智能点餐项目。除了菜单、购物车和云端订单闭环，还实现了 Evidence-first RAG、原生 Function Calling Ordering Agent，以及独立的 Python + FastAPI + LangChain + LangGraph 只读智能路由。模型负责开放式理解、证据或工具选择；价格、状态、副作用、订单确认和幂等由服务器与用户确认控制。当前 JS 818 项、Python 137 项自动化测试通过，并完成真实微信端、uniCloud 与 Qwen/LangChain/LangGraph 链路验收。
 
 ## 90 秒项目介绍
 
@@ -21,6 +21,11 @@ V7.2A 在这条链路外增加项目自有的 LangGraph `StateGraph`。LangGraph
 节点流转；进入 `menu_agent` 后，现有 LangChain Agent 继续负责 Qwen Tool Calling、
 ToolMessage observation 与 sequential replanning。这样没有为了展示 LangGraph 而重写已验收
 的 Tool Agent。
+
+V7.2B 在同一个 StateGraph 中加入 `knowledge_query → rag_node`。它没有把 RAG 复制到
+Python，而是通过 `RagGateway → HMAC Framework Gateway → rag_answer` 调用现有 uniCloud
+`rag.answer(query)`。真实“柠檬茶是什么味道？”案例返回了柠檬香气和红茶、柠檬配料事实；
+正式 API 仍不暴露 route、chunks、scores 或 evidence IDs。
 
 ## 3 分钟项目介绍
 
@@ -48,8 +53,9 @@ V7 还增加了一条独立 Python LangChain 只读链路。较早一次真实�
 Tool-result-driven sequential replanning。
 
 V7.2A 进一步补上项目级显式 Workflow：`route_request` 通过 Conditional Edges 把请求分到
-菜单查询、确定性闲聊或只读拒绝，再统一进入 `normalize_result`。菜单分支只是适配现有
-FrameworkAgent；LangGraph 决定“走哪条业务路径”，LangChain 决定“菜单查询中如何调用 Tool”。
+实时菜单查询、知识问答、确定性闲聊或只读拒绝，再统一进入 `normalize_result`。菜单分支
+适配现有 FrameworkAgent；知识分支复用现有 uniCloud RAG。LangGraph 决定“走哪条业务
+路径”，LangChain 决定“菜单查询中如何调用 Tool”。
 
 ### 4. 订单与幂等
 
@@ -72,7 +78,8 @@ Checkout 完全走确定性服务端逻辑，不经过 Qwen。Preview 先校价�
 独立 Python 服务中再区分两层：LangGraph 负责顶层 Workflow Orchestration，LangChain
 `create_agent` 负责菜单分支内部的 Tool Calling Loop。
 
-RAG 与 Agent 共享真实菜单数据，但当前没有调用关系；`rag.answer()` 不是 Agent Tool。
+RAG 与 Agent 共享真实菜单数据。LangGraph 可以在顶层选择 RAG 分支，但 `rag.answer()` 不是
+LangChain Agent Tool，菜单 Agent 不会在 Tool Loop 中自行调用它。
 
 ## 高频问题与回答要点
 
@@ -178,7 +185,9 @@ requestId 是客户端为一次提交意图生成的幂等键；orderNo 是订�
 
 ### 25. 为什么 Agent 与 RAG 没有硬绑在一起？
 
-菜单知识问答与实时工具编排有不同的输入、评测和信任边界。当前需求可分别完成，强行连接会增加链路、成本和故障面。未来只有出现需要知识检索的 Agent 任务时，才考虑把受限 RAG 能力注册为 Tool。
+菜单知识问答与实时工具编排有不同的输入、评测和信任边界。V7.2B 只在 LangGraph 顶层把
+问题路由到其中一条独立分支，没有把 RAG 注册为 Agent Tool。这样可以组合能力，又不会让
+菜单 Agent 自由调用知识链路或混合两套错误边界。
 
 ### 26. 当前系统还有什么问题？
 
@@ -186,10 +195,16 @@ requestId 是客户端为一次提交意图生成的幂等键；orderNo 是订�
 
 ### 27. 为什么同时使用 LangGraph 和 LangChain？
 
-V7.1C 已有稳定的 LangChain Tool Agent，但缺少项目级显式 Workflow。V7.2A 用 LangGraph
-负责请求路由、Graph State 和节点流转，菜单节点继续复用 LangChain `create_agent`。这样把
-“走哪条业务路径”和“菜单查询中如何调用 Tool”分开，也避免重写真实验收过的 Agent Loop。
-当前图没有 RAG/Native Agent 路由、checkpointer、conversation memory 或多轮状态。
+V7.1C 已有稳定的 LangChain Tool Agent，但缺少项目级显式 Workflow。LangGraph 负责请求
+路由、Graph State 和节点流转；菜单节点继续复用 LangChain `create_agent`，知识节点复用
+现有 uniCloud RAG。这样把“走哪条业务路径”“菜单查询中如何调用 Tool”和“知识问答如何
+grounding”分开。当前图没有 Native Agent 路由、checkpointer、conversation memory 或多轮状态。
+
+### 28. 为什么不把 RAG 复制到 Python？
+
+uniCloud RAG 已有稳定的 Embedding、Exact Retrieval、Top-3、Evidence-first grounding 和
+服务器确定性渲染。Python 这一层只需要 orchestration，因此通过认证 Gateway 复用正式能力，
+保持 single source of truth，也避免两套知识副本、向量和 Retrieval 实现随时间漂移。
 
 ## 如果再给两周
 
@@ -203,12 +218,12 @@ V7.1C 已有稳定的 LangChain Tool Agent，但缺少项目级显式 Workflow�
 
 - Knowledge Base：21 chunks；baseline：12 fixed queries。
 - RAG 是 single-turn；Agent 没有 multi-turn conversation memory。
-- RAG 不是 Agent Tool。
+- RAG 不是 LangChain Agent Tool；LangGraph 只在独立知识分支调用它。
 - Cart 在 Pinia；Pending Action 不持久化。
 - 未决 requestId 与 frozen payload 不跨刷新或小程序重启恢复。
 - 没有支付、库存事务或 exactly-once distributed transaction。
 - 没有 production-scale Vector DB。
-- LangGraph 当前只负责单轮顶层路由；没有 RAG/Native Agent integration、checkpointer、
-  thread memory 或 conversation history。
+- LangGraph 当前只负责单轮顶层路由；没有 Native Agent integration、checkpointer、thread
+  ID、conversation memory、multi-turn chat 或前端聊天 UI。
 
 这些边界说明当前工程验证覆盖到哪里，也给出了下一步可以被独立评测的方向。

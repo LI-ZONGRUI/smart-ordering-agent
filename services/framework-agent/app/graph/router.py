@@ -17,6 +17,18 @@ _UNSUPPORTED_ACTION_MARKERS = (
     "结账",
     "结算",
 )
+_KNOWLEDGE_MARKERS = (
+    "口味",
+    "味道",
+    "配料",
+    "食材",
+    "菜品描述",
+    "清爽",
+    "酸甜",
+    "爽脆",
+    "辣",
+    "里面有什么",
+)
 
 
 def classify_request(query: str) -> FrameworkRoute:
@@ -27,6 +39,8 @@ def classify_request(query: str) -> FrameworkRoute:
         return "smalltalk"
     if any(marker in normalized for marker in _UNSUPPORTED_ACTION_MARKERS):
         return "unsupported_action"
+    if any(marker in normalized for marker in _KNOWLEDGE_MARKERS):
+        return "knowledge_query"
     return "menu_query"
 
 

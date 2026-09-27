@@ -3,6 +3,7 @@
 import json
 
 from app.agent import AgentResult
+from app.gateways.rag import KnowledgeAnswer
 from app.graph.workflow import build_framework_graph
 
 
@@ -12,8 +13,14 @@ class InspectionOnlyAgent:
         raise RuntimeError("inspection script does not execute the menu agent")
 
 
+class InspectionOnlyRagGateway:
+    async def answer_knowledge(self, query: str) -> KnowledgeAnswer:
+        del query
+        raise RuntimeError("inspection script does not execute RAG")
+
+
 def main() -> None:
-    graph = build_framework_graph(InspectionOnlyAgent())
+    graph = build_framework_graph(InspectionOnlyAgent(), InspectionOnlyRagGateway())
     drawable = graph.get_graph()
     result = {
         "nodes": sorted(name for name in drawable.nodes if not name.startswith("__")),
@@ -29,7 +36,7 @@ def main() -> None:
             ),
             key=lambda edge: (edge["source"], edge["target"]),
         ),
-        "routes": ["menu_query", "smalltalk", "unsupported_action"],
+        "routes": ["menu_query", "knowledge_query", "smalltalk", "unsupported_action"],
     }
     print(json.dumps(result, ensure_ascii=False, indent=2))
 

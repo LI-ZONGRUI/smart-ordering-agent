@@ -30,7 +30,8 @@ async def get_agent_runner() -> AgentRunner:
     gateway = build_menu_gateway()
     try:
         agent = build_production_agent(gateway)
-        workflow = build_framework_workflow(agent)
+        # 同一个认证HTTP适配器实现MenuGateway与RagGateway，复用HMAC和连接生命周期。
+        workflow = build_framework_workflow(agent, gateway)
     except Exception:
         await gateway.aclose()
         raise

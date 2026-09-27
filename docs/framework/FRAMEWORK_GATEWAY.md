@@ -43,11 +43,12 @@ The Gateway is a normal uniCloud cloud function intended to be URLized at one ex
 - limits the decoded body to 4096 bytes;
 - authenticates the exact raw body bytes before JSON parsing;
 - validates a strict top-level and per-operation schema;
-- dispatches through a static three-operation map;
+- dispatches through a static four-operation map;
 - returns small normalized data from the shared domain;
 - converts database and implementation failures to fixed safe errors.
 
-It has no cart, order, payment, RAG admin, arbitrary collection, or database-write capability.
+It has no cart, order, payment, RAG administration, arbitrary collection, or database-write
+capability.
 
 ## Allowed Operations
 
@@ -86,6 +87,20 @@ records. The category ID is not hardcoded.
 
 `dishId` is trimmed and limited to 128 Unicode characters. A missing dish remains the normal
 `found: false` result; sold-out detail remains visible with its real status.
+
+### `rag_answer`
+
+```json
+{
+  "operation": "rag_answer",
+  "arguments": { "query": "柠檬茶是什么味道？" }
+}
+```
+
+`query` is trimmed and must contain 1–200 Unicode characters. This operation delegates to the
+existing evidence-first `rag.answer(query)` implementation. The Gateway returns only `query`,
+`answerable`, and the server-rendered `answer`; it omits evidence IDs, chunks, similarity scores,
+embeddings, prompts, raw model output, and reasoning.
 
 All other operation names, including prototype-property names and write operations, are rejected.
 Extra top-level and argument fields are rejected.
@@ -180,14 +195,24 @@ path was added for nonce storage. Persistent replay prevention is future hardeni
 | Error | Meaning |
 | --- | --- |
 | `FRAMEWORK_GATEWAY_REQUEST_INVALID` | HTTP, payload, JSON, size, or argument contract failed |
-| `FRAMEWORK_GATEWAY_OPERATION_NOT_ALLOWED` | Operation is outside the three-item allowlist |
+| `FRAMEWORK_GATEWAY_OPERATION_NOT_ALLOWED` | Operation is outside the four-item read-only allowlist |
 | `FRAMEWORK_GATEWAY_AUTH_MISSING` | Required authentication metadata is absent |
 | `FRAMEWORK_GATEWAY_AUTH_INVALID` | Signature or authentication metadata is malformed/invalid |
 | `FRAMEWORK_GATEWAY_AUTH_EXPIRED` | Timestamp is outside ±300 seconds |
 | `FRAMEWORK_GATEWAY_AUTH_VERSION_UNSUPPORTED` | Signature version is not `v1` |
 | `FRAMEWORK_GATEWAY_CONFIG_MISSING` | Server secret is unavailable or invalid |
-| `FRAMEWORK_GATEWAY_TOOL_FAILED` | Shared menu read failed safely |
+| `FRAMEWORK_GATEWAY_TOOL_FAILED` | A permitted read-only operation failed safely |
 | `FRAMEWORK_GATEWAY_INTERNAL_ERROR` | Unexpected Gateway failure |
+
+## V7.2B Status
+
+V7.2B has completed controlled real acceptance through the formal FastAPI API. The accepted
+knowledge query `柠檬茶是什么味道？` followed `knowledge_query → rag_node → RagGateway → HMAC
+Framework Gateway → rag_answer → existing rag.answer(query)` and returned the grounded lemon
+aroma and recorded red-tea/lemon ingredient facts. The Gateway response remained limited to
+`query`, `answerable`, and `answer`.
+
+Automated tests remain fully offline. The HMAC-SHA256 v1 canonical protocol was not changed.
 
 ## Real uniCloud Acceptance
 

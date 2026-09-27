@@ -128,6 +128,22 @@ const operationDefinitions = Object.freeze({
       return { dishId: cleanString(argumentsValue.dishId, 128) }
     },
     execute: (domain, args) => domain.getDishDetail(args)
+  }),
+  rag_answer: Object.freeze({
+    validate(argumentsValue) {
+      if (!exactKeys(argumentsValue, ['query'])) throw new GatewayError('FRAMEWORK_GATEWAY_REQUEST_INVALID')
+      return { query: cleanString(argumentsValue.query, 200) }
+    },
+    async execute(_domain, args, ragAnswer) {
+      const result = await ragAnswer(args.query)
+      const errCode = ownData(result, 'errCode')
+      const query = ownData(result, 'query')
+      const answerable = ownData(result, 'answerable')
+      const answer = ownData(result, 'answer')
+      if (errCode !== 0 || query !== args.query || typeof answerable !== 'boolean') throw new Error()
+      // Gateway只投影正式回答需要的安全字段，不暴露证据ID、检索分数或内部元数据。
+      return { query, answerable, answer: cleanString(answer, 4000) }
+    }
   })
 })
 
@@ -143,9 +159,10 @@ function parseRequest(bodyBytes) {
   return { operation: body.operation, arguments: definition.validate(body.arguments), definition }
 }
 
-function createFrameworkGateway({ domain, getSecret = () => process.env.FRAMEWORK_GATEWAY_SECRET,
+function createFrameworkGateway({ domain, ragAnswer, getSecret = () => process.env.FRAMEWORK_GATEWAY_SECRET,
   now = () => Math.floor(Date.now() / 1000), cryptoModule = crypto } = {}) {
   if (!domain || typeof domain !== 'object') throw new TypeError('domain is required')
+  if (typeof ragAnswer !== 'function') throw new TypeError('ragAnswer is required')
   return async function handle(event) {
     try {
       const secret = getSecret()
@@ -158,7 +175,7 @@ function createFrameworkGateway({ domain, getSecret = () => process.env.FRAMEWOR
       verifyAuthentication({ event, bodyBytes, secret, nowSeconds: now(), cryptoModule })
       const request = parseRequest(bodyBytes)
       try {
-        const data = await request.definition.execute(domain, request.arguments)
+        const data = await request.definition.execute(domain, request.arguments, ragAnswer)
         if (!data || typeof data !== 'object' || Array.isArray(data)) throw new Error()
         return { errCode: 0, operation: request.operation, data }
       } catch {

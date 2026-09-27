@@ -138,6 +138,86 @@ async def test_all_three_operations_use_exact_names_and_arguments() -> None:
 
 
 @pytest.mark.asyncio
+async def test_rag_answer_reuses_the_same_signed_transport_and_returns_only_safe_fields() -> None:
+    observed: dict[str, object] = {}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        observed.update(headers=dict(request.headers), content=request.content)
+        return _success(
+            "rag_answer",
+            {
+                "query": "柠檬茶是什么味道？",
+                "answerable": True,
+                "answer": "柠檬茶，项目描述为具有柠檬香气。",
+            },
+        )
+
+    gateway, client = _gateway(handler)
+    try:
+        result = await gateway.answer_knowledge(" 柠檬茶是什么味道？ ")
+    finally:
+        await client.aclose()
+
+    assert result == {
+        "query": "柠檬茶是什么味道？",
+        "answerable": True,
+        "answer": "柠檬茶，项目描述为具有柠檬香气。",
+    }
+    assert observed["content"] == (
+        '{"operation":"rag_answer","arguments":{"query":"柠檬茶是什么味道？"}}'.encode()
+    )
+    headers = observed["headers"]
+    assert isinstance(headers, dict)
+    assert headers["x-framework-signature-version"] == "v1"
+    assert "x-framework-signature" in headers
+    assert SECRET not in json.dumps(headers)
+
+
+@pytest.mark.parametrize("query", ["", " ", "中" * 201])
+@pytest.mark.asyncio
+async def test_rag_answer_rejects_invalid_query_before_http(query: str) -> None:
+    requests = 0
+
+    def handler(_request: httpx.Request) -> httpx.Response:
+        nonlocal requests
+        requests += 1
+        return httpx.Response(500)
+
+    gateway, client = _gateway(handler)
+    try:
+        with pytest.raises(FrameworkError, match="FRAMEWORK_GATEWAY_REQUEST_FAILED"):
+            await gateway.answer_knowledge(query)
+    finally:
+        await client.aclose()
+    assert requests == 0
+
+
+@pytest.mark.parametrize(
+    "data",
+    [
+        {"query": "问题", "answerable": True},
+        {"query": "问题", "answerable": "yes", "answer": "回答"},
+        {"query": "别的问题", "answerable": True, "answer": "回答"},
+        {"query": "问题", "answerable": True, "answer": " "},
+        {
+            "query": "问题",
+            "answerable": True,
+            "answer": "回答",
+            "evidence": [{"knowledgeId": "private"}],
+        },
+    ],
+)
+@pytest.mark.asyncio
+async def test_rag_answer_rejects_malformed_or_widened_response(data: object) -> None:
+    gateway, client = _gateway(lambda _request: _success("rag_answer", data))
+    try:
+        with pytest.raises(FrameworkError, match="FRAMEWORK_GATEWAY_RESPONSE_INVALID"):
+            await gateway.answer_knowledge("问题")
+    finally:
+        await client.aclose()
+
+
+@pytest.mark.asyncio
 async def test_detail_not_found_keeps_existing_gateway_contract() -> None:
     gateway, client = _gateway(
         lambda _request: _success(

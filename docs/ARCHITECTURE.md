@@ -8,7 +8,8 @@
 - RAG 菜单问答：知识检索 → evidence 选择 → 服务器原文渲染。
 - Ordering Agent：原生 Function Calling → 菜单 Tool → 待确认购物车动作。
 
-RAG 与 Agent 当前没有互相调用；`rag.answer()` 没有注册为 Agent Tool。购物车和订单副作用也不由 LLM 直接执行。
+RAG 与 Ordering Agent 当前没有互相作为 Tool 调用；LangGraph 只在顶层选择独立分支，
+`rag.answer()` 没有注册为 Agent Tool。购物车和订单副作用也不由 LLM 直接执行。
 
 V7.1A 在现有系统旁新增独立的 Python FastAPI + LangChain 框架服务。它通过
 `MenuGateway` 端口隔离菜单来源，并使用测试 fixture 完成离线编排验证。V7.1B-2 的正式
@@ -16,8 +17,10 @@ V7.1A 在现有系统旁新增独立的 Python FastAPI + LangChain 框架服务�
 LangChain `create_agent`、Structured Tools、Gateway 和真实菜单数据的端到端验收；微信端仍未
 接入这条 Python 链路。V7.2A 已实现显式自定义 LangGraph `StateGraph`：顶层图负责路由和
 结果归一化，现有 LangChain Agent 继续负责菜单 Tool Loop。smalltalk、真实 Qwen 菜单查询和
-只读拒绝均已通过本地 FastAPI 正式入口验收。该图没有引入记忆、checkpointer 或多轮历史，
-该服务也不拥有数据库或交易职责。
+只读拒绝均已通过本地 FastAPI 正式入口验收。V7.2B 新增 `knowledge_query → rag_node`，经
+`RagGateway → HMAC Framework Gateway → rag_answer` 复用现有 uniCloud RAG；四条闭合路由
+均已完成真实验收。该图没有引入记忆、checkpointer 或多轮历史，该服务也不拥有数据库或
+交易职责。
 
 V7.1B-1 已把 Native Agent 的三个只读菜单能力抽取到 uniCloud Shared Menu Domain，并让
 Native Agent 与经过 HMAC-SHA256 认证的 URL 化 Framework Gateway 复用同一实现。Shared
@@ -53,9 +56,11 @@ graph TB
     LG[LangGraph StateGraph<br/>Top-level Routing]
     LC[LangChain create_agent]
     GW[MenuGateway Port]
+    RGW[RagGateway Port]
     SMALL[Smalltalk / Read-only Boundary]
     FASTAPI --> LG
     LG --> LC --> GW
+    LG --> RGW
     LG --> SMALL
   end
 
@@ -72,6 +77,7 @@ graph TB
     RAGOBJ[rag]
     AGOBJ[agent]
     ORD[orders]
+    FGW[framework-gateway<br/>HMAC read-only]
   end
 
   subgraph DB[Database]
@@ -92,6 +98,9 @@ graph TB
   RS --> RAGOBJ
   AS --> AGOBJ
   OS --> ORD
+  GW --> FGW
+  RGW --> FGW
+  FGW --> RAGOBJ
 
   AI --> REC
   RAGOBJ --> RAG
@@ -118,6 +127,9 @@ Framework Gateway ─────────┘
 
 Python LangChain Service ── MenuGateway ── UniCloudHttpMenuGateway
         └──────────────────── HTTPS + HMAC ── Framework Gateway
+
+Python LangGraph rag_node ── RagGateway ── same authenticated HTTP adapter
+        └──────────────────── rag_answer ── existing uniCloud rag.answer(query)
 ```
 
 Python Adapter 与协议已完成真实 Gateway 验收。V7.1C 进一步通过本地受控验收脚本调用真实
@@ -359,9 +371,9 @@ RAG 端到端评测使用21条知识与12条固定 Query：
 - Evidence Hit Rate：5/6 supported，83.33%。
 - Server Grounding Pass：12/12，100%。
 
-这是项目级小样本评测，不是生产 Benchmark。V6 冻结时为747项自动化测试；加入 V7.1B-1
-Shared Domain 与 Gateway 回归后，当前完整 JavaScript 测试为808项，并另有微信开发者工具、
-真实 uniCloud 数据库、管理入口和 URL 化 Gateway 验收记录。
+这是项目级小样本评测，不是生产 Benchmark。V6 冻结时为747项自动化测试；V7.2B
+Finalization 时完整 JavaScript 测试为818项，Python 测试为137项，并另有微信开发者工具、
+真实 uniCloud 数据库、管理入口、URL 化 Gateway 与四条 LangGraph 路由验收记录。
 
 ## 9. 信任边界
 
@@ -378,11 +390,13 @@ Shared Domain 与 Gateway 回归后，当前完整 JavaScript 测试为808项，
 ## 10. Current Scope / Future Work
 
 - 单轮 RAG 与单次 Agent Task，没有 conversation memory。
-- RAG 不是 Agent Tool。
+- RAG 不是 LangChain Agent Tool；LangGraph 只在独立 `knowledge_query` 分支调用它。
 - 21 chunks、12-query baseline，规模有限。
 - Pinia Cart、Pending Action 与未决提交恢复不跨小程序重启持久化。
 - 没有支付、库存事务、uni-id 或 exactly-once distributed transaction。
 - 没有生产规模 Vector DB、ANN、分布式检索和生产治理。
+- 没有 Native Agent LangGraph delegation、checkpointer、thread ID、conversation memory、
+  multi-turn chat 或 Python Framework 前端聊天 UI。
 
 下一步应先扩充评测与失败样本，再基于冻结 baseline 比较检索、Evidence Selection 和持久化恢复方案，而不是直接扩大 Agent 权限。
 

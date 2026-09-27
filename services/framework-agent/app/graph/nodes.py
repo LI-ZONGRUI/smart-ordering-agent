@@ -5,6 +5,7 @@ from typing import Protocol
 
 from app.agent import AgentResult
 from app.errors import internal_error
+from app.gateways.rag import RagGateway
 from app.graph.state import FRAMEWORK_ROUTES, FrameworkGraphState
 
 GraphNode = Callable[[FrameworkGraphState], Awaitable[dict[str, object]]]
@@ -25,6 +26,16 @@ def build_menu_agent_node(agent: MenuAgentRunner) -> GraphNode:
         return {"answer": result.answer, "completed": result.completed}
 
     return menu_agent
+
+
+def build_rag_node(gateway: RagGateway) -> GraphNode:
+    """Delegate knowledge questions to the existing evidence-first uniCloud RAG."""
+
+    async def rag_node(state: FrameworkGraphState) -> dict[str, object]:
+        result = await gateway.answer_knowledge(state["query"])
+        return {"answer": result["answer"], "completed": True}
+
+    return rag_node
 
 
 async def smalltalk_response(_state: FrameworkGraphState) -> dict[str, object]:

@@ -81,17 +81,31 @@ pytest behavior.
 
 V7.1 used LangGraph only through LangChain's agent runtime. V7.2A now declares LangGraph 1.2.12 as
 a direct dependency and defines a project-owned `StateGraph` under `app/graph/`. Its minimal typed
-state contains `query`, `route`, `answer` and `completed`; conditional edges route requests to the
-existing menu Agent, deterministic smalltalk, or a deterministic read-only boundary. Every branch
-passes through `normalize_result` before `END`.
+state contains `query`, `route`, `answer` and `completed`. V7.2B adds the closed
+`knowledge_query` route, which delegates through `rag_node` and the authenticated Gateway to the
+existing uniCloud RAG. Conditional edges route requests to the existing menu Agent, the RAG,
+deterministic smalltalk, or a deterministic read-only boundary. Every branch passes through
+`normalize_result` before `END`.
 
 The menu node delegates to the accepted `FrameworkAgent`; it does not call the Gateway directly
-or replace the inner LangChain Tool loop. There is no checkpointer, thread ID, conversation memory,
-multi-turn history, RAG routing or Native Agent delegation. The formal HTTP response still omits
-route, graph state, trace and messages.
+or replace the inner LangChain Tool loop. The RAG node accepts only the graph query and returns the
+existing server-rendered answer; it does not implement Embedding, Retrieval, Grounding, or
+evidence rendering in Python. There is no checkpointer, thread ID, conversation memory,
+multi-turn history, or Native Agent delegation. The formal HTTP response still omits route, graph
+state, trace, messages, evidence IDs, chunks, scores, and embeddings.
 
 **V7.2A is complete and has passed controlled local acceptance through the formal FastAPI
 endpoint, including smalltalk, the real Qwen menu path and the deterministic read-only boundary.**
+
+**V7.2B has completed controlled real acceptance through the formal FastAPI endpoint.** The four
+accepted cases covered a real-time lemon-tea lookup, a grounded lemon-tea taste/ingredients
+knowledge answer, deterministic smalltalk, and deterministic refusal of a cart write request.
+Automated tests remain offline and do not call the remote Gateway or Qwen.
+
+The router remains intentionally small and deterministic. Write-action and exact greeting rules
+run first; a compact set of taste, ingredient, description, and texture markers selects
+`knowledge_query`; other read-only questions default to `menu_query`. Ambiguous phrasing can be
+misclassified, and V7.2B does not add a router model or a large item-specific keyword table.
 
 ## Failure and execution controls
 
@@ -131,3 +145,12 @@ recursion limit bounds the agent cycle and FastAPI applies an overall 20-second 
   autonomous workflow claim.
 - Preserve uniCloud ownership of facts and transactions.
 - Keep write effects behind deterministic validation and explicit user confirmation.
+
+### V7.2B
+
+- Add deterministic `knowledge_query` routing and `rag_node` while keeping graph state minimal.
+- Reuse HMAC v1 and the existing authenticated HTTP adapter through a narrow `RagGateway` port.
+- Keep `rag.answer(query)` as the sole RAG implementation and expose only its safe rendered answer.
+- Keep the formal API shape unchanged and continue rejecting write actions.
+- Real `menu_query`, `knowledge_query`, `smalltalk`, and `unsupported_action` paths are accepted
+  through the unchanged formal API.

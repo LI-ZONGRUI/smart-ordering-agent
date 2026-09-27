@@ -14,6 +14,7 @@ from app.errors import (
     gateway_timeout,
 )
 from app.gateways.base import DishDetailResult, MenuGateway, MenuItemDetail, MenuSearchResult
+from app.gateways.rag import KnowledgeAnswer
 from app.gateways.signing import Clock, NonceFactory, build_auth_headers, encode_json_body
 
 GATEWAY_TIMEOUT = httpx.Timeout(connect=3.0, read=8.0, write=5.0, pool=3.0)
@@ -87,6 +88,22 @@ def _detail_result(data: object, *, dish_id: str) -> DishDetailResult:
         "spicyLevel": item["spicyLevel"],
     }
     return {"found": True, "item": detail}
+
+
+def _knowledge_answer(data: object, *, query: str) -> KnowledgeAnswer:
+    if not isinstance(data, dict) or set(data) != {"query", "answerable", "answer"}:
+        raise gateway_response_invalid()
+    if (
+        data.get("query") != query
+        or type(data.get("answerable")) is not bool
+        or not _nonempty(data.get("answer"))
+    ):
+        raise gateway_response_invalid()
+    return {
+        "query": query,
+        "answerable": data["answerable"],
+        "answer": data["answer"].strip(),
+    }
 
 
 class UniCloudHttpMenuGateway(MenuGateway):
@@ -167,6 +184,15 @@ class UniCloudHttpMenuGateway(MenuGateway):
             raise gateway_request_failed()
         data = await self._request("get_dish_detail", {"dishId": clean})
         return _detail_result(data, dish_id=clean)
+
+    async def answer_knowledge(self, query: str) -> KnowledgeAnswer:
+        """Call the existing evidence-first RAG through the same authenticated transport."""
+
+        clean = query.strip() if isinstance(query, str) else ""
+        if not 1 <= len(clean) <= 200:
+            raise gateway_request_failed()
+        data = await self._request("rag_answer", {"query": clean})
+        return _knowledge_answer(data, query=clean)
 
 
 def build_menu_gateway(

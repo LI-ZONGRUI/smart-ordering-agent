@@ -2,8 +2,10 @@
 
 from typing import Literal, NotRequired, TypedDict
 
-FrameworkRoute = Literal["menu_query", "smalltalk", "unsupported_action"]
-FRAMEWORK_ROUTES: frozenset[str] = frozenset({"menu_query", "smalltalk", "unsupported_action"})
+FrameworkRoute = Literal["menu_query", "knowledge_query", "smalltalk", "unsupported_action"]
+FRAMEWORK_ROUTES: frozenset[str] = frozenset(
+    {"menu_query", "knowledge_query", "smalltalk", "unsupported_action"}
+)
 
 
 class FrameworkGraphState(TypedDict):

@@ -11,7 +11,9 @@ V7.1A 另行建立了一个独立的 Python 3.11 + FastAPI + LangChain 框架服
 到真实 uniCloud 菜单的只读验收。V7.1C 已使用真实 Qwen3.8-Flash 完成 LangChain、三个
 Structured Tools、HMAC Gateway 与真实菜单数据的端到端验收；微信前端仍未接入这条 Python
 链路。V7.2A 已加入项目自有的显式 LangGraph `StateGraph`，并通过 FastAPI 正式入口完成
-smalltalk、真实 Qwen 菜单查询和只读拒绝三条路由验收。详见
+smalltalk、真实 Qwen 菜单查询和只读拒绝三条路由验收。V7.2B 进一步加入
+`knowledge_query → rag_node`：通过同一 HMAC Gateway 的只读 `rag_answer` 复用现有 uniCloud
+RAG，并已完成菜单查询、知识问答、闲聊和写操作拒绝四条正式 API 路径的真实验收。详见
 [Framework Agent Service](services/framework-agent/README.md)。
 
 V7.1B-1 已在 uniCloud 侧把三个只读菜单能力抽取为同一 Shared Domain，并新增 HMAC-SHA256
@@ -303,7 +305,7 @@ pnpm run rag:check-source
 git diff --check
 ```
 
-当前回归：**808 项 JavaScript 测试与 118 项 Python 测试通过**。测试覆盖 RAG 索引/检索/生成/评测、Agent Tool 与多步循环、显式 LangGraph 路由、动作确认、订单预览/创建、幂等并发语义、前端状态以及冻结文件未漂移。
+当前回归：**818 项 JavaScript 测试与 137 项 Python 测试通过**。测试覆盖 RAG 索引/检索/生成/评测、Agent Tool 与多步循环、四路显式 LangGraph 路由、动作确认、订单预览/创建、幂等并发语义、前端状态以及冻结文件未漂移。
 
 ## Known Limitations / Future Work
 

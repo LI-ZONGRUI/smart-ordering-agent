@@ -52,8 +52,18 @@ function eventFor(payload, options = {}) {
 function setup(options = {}) {
   const fixture = createMenuDb(options.dbOptions)
   const domain = options.domain || bindSharedDomain(fixture.db)
+  const ragAnswer = options.ragAnswer || (async query => ({
+    errCode: 0,
+    query,
+    answerable: true,
+    answer: '根据当前菜单知识返回的可信回答。',
+    dishIds: ['dish-4'],
+    usedKnowledgeIds: ['dish-4-taste'],
+    evidence: [{ knowledgeId: 'dish-4-taste', similarity: 0.9 }]
+  }))
   const handle = createFrameworkGateway({
     domain,
+    ragAnswer,
     getSecret: options.getSecret || (() => TEST_SECRET),
     now: options.now || (() => NOW),
     cryptoModule: options.cryptoModule || crypto
@@ -204,6 +214,57 @@ test('get_dish_detail允许并返回真实Shared结果', async () => {
   assert.equal(result.data.item.name, '柠檬茶')
 })
 
+test('rag_answer要求相同HMAC并只返回安全正式字段', async () => {
+  const result = await setup().handle(eventFor({
+    operation: 'rag_answer', arguments: { query: ' 柠檬茶是什么味道？ ' }
+  }))
+  assert.deepEqual(result, {
+    errCode: 0,
+    operation: 'rag_answer',
+    data: {
+      query: '柠檬茶是什么味道？',
+      answerable: true,
+      answer: '根据当前菜单知识返回的可信回答。'
+    }
+  })
+  const text = JSON.stringify(result)
+  for (const forbidden of ['dishIds', 'knowledgeId', 'similarity', 'embedding', 'prompt', 'reasoning']) {
+    assert.ok(!text.includes(forbidden), forbidden)
+  }
+})
+
+test('rag_answer缺少或错误HMAC时拒绝', async () => {
+  const event = eventFor({ operation: 'rag_answer', arguments: { query: '什么口味？' } })
+  delete event.headers['x-framework-signature']
+  assert.equal((await setup().handle(event)).errCode, 'FRAMEWORK_GATEWAY_AUTH_MISSING')
+  const bad = eventFor({ operation: 'rag_answer', arguments: { query: '什么口味？' } }, {
+    signature: '0'.repeat(64)
+  })
+  assert.equal((await setup().handle(bad)).errCode, 'FRAMEWORK_GATEWAY_AUTH_INVALID')
+})
+
+for (const args of [{}, { query: '' }, { query: ' ' }, { query: 1 },
+  { query: '中'.repeat(201) }, { query: '什么口味？', topK: 3 }]) {
+  test(`rag_answer参数拒绝 ${JSON.stringify(args).slice(0, 30)}`, async () => {
+    const result = await setup().handle(eventFor({ operation: 'rag_answer', arguments: args }))
+    assert.equal(result.errCode, 'FRAMEWORK_GATEWAY_REQUEST_INVALID')
+  })
+}
+
+test('rag_answer异常或不安全格式统一为安全Tool错误', async () => {
+  for (const ragAnswer of [
+    async () => { throw new Error(`private database ${TEST_SECRET}`) },
+    async query => ({ errCode: 0, query, answerable: 'yes', answer: 'bad' }),
+    async query => ({ errCode: 'RAG_INTERNAL', query, answerable: false, answer: 'bad' })
+  ]) {
+    const result = await setup({ ragAnswer }).handle(eventFor({
+      operation: 'rag_answer', arguments: { query: '什么口味？' }
+    }))
+    assert.deepEqual(result, { errCode: 'FRAMEWORK_GATEWAY_TOOL_FAILED', message: '菜单查询未完成' })
+    assert.ok(!JSON.stringify(result).includes(TEST_SECRET))
+  }
+})
+
 for (const args of [{ query: '' }, { query: ' ' }, { query: '中'.repeat(201) }, { query: 1 },
   {}, { query: '可乐', filters: {} }]) {
   test(`search_menu参数拒绝 ${JSON.stringify(args).slice(0, 30)}`, async () => {
@@ -255,9 +316,10 @@ test('Gateway源码没有DB查询、动态执行、写操作或管理接口复�
   const files = ['index.js', 'gateway.js', 'menu-domain.js']
   const text = files.map(file => fs.readFileSync(`uniCloud-aliyun/cloudfunctions/framework-gateway/${file}`, 'utf8')).join('\n')
   for (const pattern of [/uniCloud\.database/,/collection\(/,/sharedDomain\[operation\]/,
-    /\badd\s*\(\s*\{/,/\bupdate\s*\(\s*\{/,/\bremove\s*\(/,/importObject/,/agent-admin/,/agent-tool-admin/]) {
+    /\badd\s*\(\s*\{/,/\bupdate\s*\(\s*\{/,/\bremove\s*\(/,/importObject\((?!'rag')/,/agent-admin/,/agent-tool-admin/]) {
     assert.ok(!pattern.test(text), String(pattern))
   }
+  assert.match(text, /uniCloud\.importObject\('rag'\)\.answer\(query\)/)
 })
 
 test('云函数入口按真实context.SOURCE识别HTTP且缺少认证进入AUTH_MISSING', async () => {
@@ -310,6 +372,55 @@ test('云函数正式入口经HMAC后调用Shared Domain而非复制查询', asy
     assert.equal(result.errCode, 0)
     assert.equal(result.data.item.name, '柠檬茶')
     assert.deepEqual(fixture.calls.map(call => call.name), ['dishes'])
+  } finally {
+    if (beforeSecret === undefined) delete process.env.FRAMEWORK_GATEWAY_SECRET
+    else process.env.FRAMEWORK_GATEWAY_SECRET = beforeSecret
+    if (beforeUniCloud === undefined) delete global.uniCloud
+    else global.uniCloud = beforeUniCloud
+  }
+})
+
+test('云函数正式入口经HMAC后只调用现有rag.answer并投影安全字段', async () => {
+  const gatewayEntry = require('../uniCloud-aliyun/cloudfunctions/framework-gateway/index.js')
+  const calls = []
+  const beforeSecret = process.env.FRAMEWORK_GATEWAY_SECRET
+  const beforeUniCloud = global.uniCloud
+  process.env.FRAMEWORK_GATEWAY_SECRET = TEST_SECRET
+  global.uniCloud = {
+    importObject(name) {
+      calls.push(['importObject', name])
+      return {
+        async answer(query) {
+          calls.push(['answer', query])
+          return {
+            errCode: 0,
+            query,
+            answerable: true,
+            answer: '可信RAG回答',
+            dishIds: ['dish-4'],
+            usedKnowledgeIds: ['dish-4-taste'],
+            evidence: [{ knowledgeId: 'dish-4-taste', text: '内部证据' }]
+          }
+        }
+      }
+    }
+  }
+  try {
+    const timestamp = String(Math.floor(Date.now() / 1000))
+    const result = await gatewayEntry.main(eventFor({
+      operation: 'rag_answer', arguments: { query: '柠檬茶是什么味道？' }
+    }, { timestamp }), { SOURCE: 'http' })
+    assert.deepEqual(result, {
+      errCode: 0,
+      operation: 'rag_answer',
+      data: { query: '柠檬茶是什么味道？', answerable: true, answer: '可信RAG回答' }
+    })
+    assert.deepEqual(calls, [
+      ['importObject', 'rag'],
+      ['answer', '柠檬茶是什么味道？']
+    ])
+    assert.ok(!JSON.stringify(result).includes('dish-4'))
+    assert.ok(!JSON.stringify(result).includes('knowledgeId'))
   } finally {
     if (beforeSecret === undefined) delete process.env.FRAMEWORK_GATEWAY_SECRET
     else process.env.FRAMEWORK_GATEWAY_SECRET = beforeSecret

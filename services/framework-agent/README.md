@@ -18,6 +18,7 @@ POST /v1/agent/run
  → project-owned LangGraph StateGraph
  → route_request
     ├─ menu_query → existing LangChain create_agent → read-only Structured Tools
+    ├─ knowledge_query → rag_node → authenticated Gateway → existing uniCloud RAG
     ├─ smalltalk → deterministic response
     └─ unsupported_action → deterministic read-only boundary
  → normalize_result
@@ -31,6 +32,11 @@ observation and replanning inside `menu_agent`.
 
 **V7.2A Explicit LangGraph StateGraph Foundation is complete and has passed controlled local
 FastAPI acceptance through the formal endpoint.**
+
+V7.2B adds the fourth `knowledge_query` route and `rag_node`. The node uses the same authenticated
+Gateway adapter to call the existing uniCloud RAG and receives only its safe server-rendered
+answer. Python does not copy knowledge, embeddings, retrieval, grounding, or rendering logic.
+**V7.2B has completed controlled real acceptance through the formal FastAPI endpoint.**
 
 ## Local setup
 
@@ -130,7 +136,8 @@ Only these three tools are registered:
 
 Their Pydantic schemas reject unknown fields. They depend only on `MenuGateway`; they contain no
 database code and expose only small menu result shapes. Cart mutation, order creation, payment,
-RAG routing, and all write operations are absent.
+and all write operations are absent. RAG is a separate graph route and is not registered as a
+LangChain Tool.
 
 `InMemoryMenuGateway` contains two deterministic fixtures for offline tests: an available lemon
 tea priced at 12 and a sold-out sour plum drink priced at 14. These are not live menu facts and
@@ -277,6 +284,27 @@ answer must hide dish IDs, Tool names, field names, Gateway/HMAC details and int
 `on_sale` and `sold_out` are rendered as “在售” and “已售罄”. The formal `/v1/agent/run` response
 remains only `errCode`, `query`, `answer` and `completed`, with no trace, messages, Tool calls,
 prompt, reasoning or raw provider response.
+
+## V7.2B real RAG route acceptance
+
+The same formal endpoint was manually verified with all four closed routes:
+
+- `有柠檬茶吗？` followed `menu_query → menu_agent` and returned the real acceptance-time price
+  of 12 yuan and on-sale status through the existing Qwen and menu Tool path.
+- `柠檬茶是什么味道？` followed `knowledge_query → rag_node → RagGateway → authenticated
+  Framework Gateway → rag_answer → existing uniCloud RAG`. The grounded answer stated the lemon
+  aroma and the recorded red-tea/lemon ingredients.
+- `你好` followed `smalltalk → smalltalk_response` without entering either remote branch.
+- `把柠檬茶加入购物车` followed `unsupported_action → readonly_boundary`, performed no write,
+  and did not delegate to the Native Agent.
+
+Every branch then passed through `normalize_result → END`. The public response remained only
+`errCode`, `query`, `answer`, and `completed`; route, graph state, chunks, scores, evidence IDs,
+trace, Tool calls, and reasoning were not exposed.
+
+LangGraph does not reimplement RAG. Embedding, Exact Retrieval, Top-3, evidence-first grounding,
+and deterministic server rendering remain in the existing uniCloud RAG. The Python service has no
+knowledge-source copy, vectors, cosine implementation, RAG prompt, or second generation pipeline.
 
 ## Real Gateway acceptance
 
