@@ -1,6 +1,8 @@
-"""Offline inspection of the explicit V7.2A graph structure."""
+"""Offline inspection of the explicit LangGraph structure."""
 
 import json
+
+from langchain_core.messages import BaseMessage
 
 from app.agent import AgentResult
 from app.gateways.action import ActionProposalResult
@@ -26,9 +28,18 @@ class InspectionOnlyActionGateway:
         raise RuntimeError("inspection script does not execute the Native Agent")
 
 
+class InspectionOnlyContextualizer:
+    async def resolve(self, query: str, history: tuple[BaseMessage, ...]) -> str:
+        del query, history
+        raise RuntimeError("inspection script does not execute the contextualizer")
+
+
 def main() -> None:
     graph = build_framework_graph(
-        InspectionOnlyAgent(), InspectionOnlyRagGateway(), InspectionOnlyActionGateway()
+        InspectionOnlyAgent(),
+        InspectionOnlyRagGateway(),
+        InspectionOnlyActionGateway(),
+        InspectionOnlyContextualizer(),
     )
     drawable = graph.get_graph()
     result = {

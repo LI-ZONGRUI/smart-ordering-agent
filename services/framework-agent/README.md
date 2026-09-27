@@ -46,6 +46,18 @@ preview, confirmed order creation, price revalidation, request fingerprinting an
 remain in their existing deterministic boundaries. **V7.2C is fully offline-tested and has
 completed real action-proposal and payment-boundary acceptance.**
 
+V7.3A adds an optional `threadId` and a process-scoped LangGraph `InMemorySaver`. Requests without
+`threadId` still use a stateless graph and never share a default conversation. Threaded requests
+retain at most eight top-level user/assistant messages. A narrow Tool-Calling contextualizer
+turns ambiguous follow-ups into an internal standalone query before routing; the public `query`
+remains the user's original text. History is semantic context only: menu follow-ups still call live
+Tools, knowledge follow-ups still call the existing RAG, and action follow-ups remain proposals.
+
+**V7.3A multi-turn backend implementation has completed real Qwen/Gateway acceptance.** The
+in-memory checkpointer is development, single-process state. It is lost on restart, has no
+cross-process consistency or thread eviction, and is not persistent memory, identity,
+authentication, authorization, or an execution token.
+
 ## Local setup
 
 Python 3.11 is required. Keep the virtual environment inside this directory:
@@ -135,12 +147,27 @@ An action proposal may add one backward-compatible optional field:
 This is a proposal for explicit user confirmation. It is not proof that the cart changed and it
 cannot represent order creation or payment.
 
+A client may optionally send and receive a safe conversation correlation identifier:
+
+```json
+{
+  "query": "它是什么味道？",
+  "threadId": "chat_example_01"
+}
+```
+
+`threadId` must match `[A-Za-z0-9_-]{8,128}`. Omitting it preserves the original single-turn API.
+The response never exposes stored messages, resolved queries, Tool messages, checkpoints, prompts,
+reasoning, provider metadata, or raw graph state.
+
 The public endpoint does not return LangChain state, raw messages, prompts, tool call IDs, hidden
 reasoning, raw model output, traces, keys, base URLs, or stack traces.
 
 | Error code | HTTP | Meaning |
 | --- | ---: | --- |
 | `FRAMEWORK_QUERY_INVALID` | 400 | Query contract failed |
+| `FRAMEWORK_THREAD_INVALID` | 400 | Optional thread correlation ID contract failed |
+| `FRAMEWORK_CONTEXT_FAILED` | 502 | Contextualization failed without exposing history or internals |
 | `FRAMEWORK_CONFIG_MISSING` | 503 | Required model or Gateway configuration is unavailable |
 | `FRAMEWORK_GATEWAY_REQUEST_FAILED` | 502 | Gateway transport or HTTP request failed |
 | `FRAMEWORK_GATEWAY_TIMEOUT` | 504 | Gateway request timed out |
@@ -201,8 +228,9 @@ START
  → unsupported_action → readonly_boundary ┘
 ```
 
-`FrameworkGraphState` contains `query`, `route`, `answer`, `completed` and an optional strict
-`pendingAction`. It does not store keys, Gateway secrets, prompts, model reasoning, raw model
+`FrameworkGraphState` contains the original `query`, internal `resolved_query`, bounded `messages`,
+`route`, `answer`, `completed` and an optional strict `pendingAction`. It does not store keys,
+Gateway secrets, prompts, model reasoning, raw model
 responses or Tool messages. The deterministic router sends a small set of add-to-cart proposal
 phrases to `action_query`; order, payment, refund, confirmation and destructive cart requests stay
 in `unsupported_action`. This is an orchestration foundation, not a complete NLU classifier.
@@ -210,10 +238,12 @@ in `unsupported_action`. This is an orchestration foundation, not a complete NLU
 For a validated add-to-cart proposal, `native_action_node` does not expose the Native Agent's free
 answer. It deterministically renders the dish name, quantity, unit price and total from
 `pendingAction`, then asks the user to confirm in the ordering UI. This avoids promising a text
-“确认” continuation when the service has no `thread_id`, memory or multi-turn execution.
+“确认” continuation when the service has no text-confirmed transaction execution. V7.3A history
+does not enlarge that authority.
 
-There is no checkpointer, `thread_id`, conversation memory or multi-turn history. The public
-FastAPI contract does not expose the selected route or graph state. Inspect the compiled graph
+V7.3A uses a process-scoped in-memory checkpointer only for explicit `threadId` requests. It does
+not provide persistent or cross-process memory. The public FastAPI contract does not expose the
+selected route, resolved query, conversation messages or graph state. Inspect the compiled graph
 offline without executing Qwen or Gateway calls:
 
 ```bash
@@ -287,8 +317,9 @@ ignored local environment settings:
 
 All three successful responses retained the narrow public contract: `errCode`, `query`, `answer`
 and `completed`. They exposed no route, graph state, node history, trace, Tool calls, reasoning or
-raw messages. This acceptance establishes the observed routes and menu path; it is not a claim of
-multi-turn memory or general autonomous workflow behavior.
+raw messages. That V7.2A acceptance established only the observed routes and menu path; V7.3A's
+separate acceptance covers bounded multi-turn context. Neither is a claim of general autonomous
+workflow behavior.
 
 During setup, `FRAMEWORK_CONFIG_MISSING` was traced to locally present but invalid model and
 Gateway URL values: neither parsed as HTTPS with a host. Correcting the ignored local environment
@@ -391,8 +422,8 @@ container deployment is claimed.
 
 - **V7.1A complete locally:** Python service, adapter, gateway port, read-only tools, real
   LangChain loop with an offline model, HTTP and safety tests.
-- **Not complete:** Python service remote deployment, frontend framework integration, multi-turn
-  memory, `thread_id`, checkpointer, conversation history, multi-turn confirmation and long-term state.
+- **Not complete:** Python service remote deployment, frontend framework integration, persistent
+  checkpointer, cross-process conversation state, multi-turn confirmation and long-term memory.
 - **V7.1B-1 accepted on real uniCloud:** shared domain and authenticated server-side Gateway. The
   Python service did not participate in that acceptance.
 - **V7.1B-2 accepted against real uniCloud:** Python `UniCloudHttpMenuGateway`, HMAC v1 client,
@@ -409,3 +440,59 @@ container deployment is claimed.
 - **V7.2C accepted:** the proposal-only action route returned a real validated 柠檬茶 ×2 action,
   while a direct payment request remained unsupported with no `pendingAction`. The final action
   answer is deterministically rendered from the proposal and no side effect is executed.
+- **V7.3A accepted with real Qwen/Gateway calls:** optional validated `threadId`, bounded
+  user/assistant history, process-scoped `InMemorySaver`, contextualized menu/RAG/action follow-ups,
+  thread isolation, stateless compatibility and safe text-confirmation rejection are verified.
+
+### Contextualizer acceptance diagnostic
+
+The first real V7.3A threaded acceptance showed that the initial request worked while ambiguous
+follow-ups returned `FRAMEWORK_CONTEXT_FAILED`. The failure is isolated to contextualization rather
+than the checkpointer, Gateway, or business nodes. The contextualizer now uses the same ordinary
+Qwen Tool Calling mechanism as the accepted menu Agent and validates one exact
+`standalone_query` schema on the server. For OpenAI-compatible response-shape differences, it also
+accepts the equivalent raw function-call arguments or an exact JSON object containing only
+`standalone_query`; free text, extra fields, malformed arguments, empty values, and multiple calls
+still fail closed.
+
+With the service's ignored local environment configured, run the explicit real-model diagnostic
+from `services/framework-agent`:
+
+```bash
+.venv/bin/python scripts/check_contextualizer.py
+```
+
+It checks the three follow-ups `多少钱？`, `它是什么味道？`, and `那来两杯。` against one fixed safe
+history. Output is limited to controlled failure stage/category signals, response-shape booleans,
+parse source, and the resolved standalone query after successful validation. It never prints the
+API key, Gateway secret, system prompt, complete history, reasoning content, raw provider response,
+or provider metadata. This script is manual diagnostics only and is never called by FastAPI.
+
+The real diagnostic returned `success=true`, `standaloneQueryParseSucceeded=true`, and
+`parseSource=normalized_tool_call` for all three queries. The validated results were:
+
+- `多少钱？` → `柠檬茶多少钱？`
+- `它是什么味道？` → `柠檬茶是什么味道的？`
+- `那来两杯。` → `那来两杯柠檬茶。`
+
+The raw and strict-JSON branches remain compatibility defenses, not claimed observed provider
+behavior.
+
+A subsequent real run used the obvious acceptance-only test ID `chat_accept_03` throughout five
+requests:
+
+1. `有柠檬茶吗？` returned the current ¥12 in-stock menu fact.
+2. `多少钱？` retained lemon tea as semantic context but still used the live menu path.
+3. `它是什么味道？` resolved the reference and used the existing RAG for lemon aroma and recorded
+   ingredients.
+4. `那来两杯。` returned a validated lemon-tea ×2 `pendingAction` totaling ¥24 without changing the
+   cart.
+5. `确认` followed the safety boundary and performed no cart, order, payment, or confirmed-order
+   write.
+
+The separate acceptance-only test ID `chat_accept_04` began with `多少钱？` and asked the user to
+identify the item rather than inheriting the other thread's lemon-tea context. A request without
+`threadId` preserved the original stateless smalltalk response. These observations verify
+conversation state isolation, not user authorization. The graph can explicitly clear an old
+`pendingAction`; a checkpointed proposal is display state, not an execution token or confirmation
+credential.

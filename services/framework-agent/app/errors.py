@@ -19,6 +19,16 @@ def query_invalid() -> FrameworkError:
     return FrameworkError("FRAMEWORK_QUERY_INVALID", "query 必须是 1～200 个字符的字符串", 400)
 
 
+def thread_invalid() -> FrameworkError:
+    return FrameworkError(
+        "FRAMEWORK_THREAD_INVALID", "threadId 必须是 8～128 位字母、数字、下划线或连字符", 400
+    )
+
+
+def context_failed() -> FrameworkError:
+    return FrameworkError("FRAMEWORK_CONTEXT_FAILED", "对话上下文处理未完成", 502)
+
+
 def config_missing() -> FrameworkError:
     return FrameworkError("FRAMEWORK_CONFIG_MISSING", "服务配置不完整", 503)
 

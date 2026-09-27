@@ -9,10 +9,22 @@ class AgentRunRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     query: Annotated[StrictStr, Field(min_length=1, max_length=200)]
+    threadId: (
+        Annotated[
+            StrictStr,
+            Field(min_length=8, max_length=128, pattern=r"^[A-Za-z0-9_-]+$"),
+        ]
+        | None
+    ) = None
 
     @field_validator("query", mode="before")
     @classmethod
     def trim_query(cls, value: object) -> object:
+        return value.strip() if isinstance(value, str) else value
+
+    @field_validator("threadId", mode="before")
+    @classmethod
+    def trim_thread_id(cls, value: object) -> object:
         return value.strip() if isinstance(value, str) else value
 
 
@@ -36,6 +48,7 @@ class AgentRunResponse(BaseModel):
     answer: str
     completed: bool = True
     pendingAction: PendingActionResponse | None = None
+    threadId: str | None = None
 
 
 class ErrorResponse(BaseModel):

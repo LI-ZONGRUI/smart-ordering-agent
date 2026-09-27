@@ -1,6 +1,9 @@
-"""Minimal serializable state for the top-level Framework Agent workflow."""
+"""Bounded, serializable state for the top-level Framework Agent workflow."""
 
-from typing import Literal, NotRequired, TypedDict
+from typing import Annotated, Literal, NotRequired, TypedDict
+
+from langchain_core.messages import BaseMessage
+from langgraph.graph.message import add_messages
 
 from app.gateways.action import PendingAction
 
@@ -10,11 +13,22 @@ FrameworkRoute = Literal[
 FRAMEWORK_ROUTES: frozenset[str] = frozenset(
     {"menu_query", "knowledge_query", "action_query", "smalltalk", "unsupported_action"}
 )
+HISTORY_MESSAGE_LIMIT = 8
+
+
+def merge_conversation_messages(
+    left: list[BaseMessage], right: list[BaseMessage]
+) -> list[BaseMessage]:
+    """Append message updates while retaining only the latest safe user/assistant window."""
+
+    return list(add_messages(left, right))[-HISTORY_MESSAGE_LIMIT:]
 
 
 class FrameworkGraphState(TypedDict):
     query: str
+    resolved_query: NotRequired[str]
+    messages: Annotated[list[BaseMessage], merge_conversation_messages]
     route: NotRequired[FrameworkRoute]
     answer: NotRequired[str]
     completed: NotRequired[bool]
-    pendingAction: NotRequired[PendingAction]
+    pendingAction: NotRequired[PendingAction | None]

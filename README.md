@@ -311,13 +311,13 @@ pnpm run rag:check-source
 git diff --check
 ```
 
-当前回归：**832 项 JavaScript 测试与 152 项 Python 测试通过**。测试覆盖 RAG 索引/检索/生成/评测、Agent Tool 与多步循环、五路显式 LangGraph 路由、动作提案、订单预览/创建、幂等并发语义、前端状态以及冻结文件未漂移。
+当前回归：**832 项 JavaScript 测试与 182 项 Python 测试通过**。测试覆盖 RAG 索引/检索/生成/评测、Agent Tool 与多步循环、五路显式 LangGraph 路由、多轮上下文化、动作提案、订单预览/创建、幂等并发语义、前端状态以及冻结文件未漂移。
 
 ## Known Limitations / Future Work
 
 - Knowledge Base 只有21条人工审核 chunks；12-query baseline 是项目级小样本评测。
-- RAG 是单轮问答；Agent 没有多轮 conversation memory。
-- LangGraph 尚无 checkpointer、`thread_id`、conversation history、多轮确认或长期记忆；Python 服务也没有 ChatGPT 风格前端。
+- RAG 接口本身仍是单轮；Python LangGraph 通过可选 `threadId` 和进程内 `InMemorySaver` 提供短期多轮语义上下文。
+- 当前没有持久化 checkpointer、跨进程/跨设备历史、多轮文本确认执行、长期记忆或 ChatGPT 风格前端。
 - RAG 没有注册成 Agent Tool，两项能力保持独立。
 - 购物车仍在客户端 Pinia；Pending Action 不持久化。
 - 未决 requestId 与 frozen payload 不跨页面刷新或小程序重启恢复。
@@ -350,9 +350,17 @@ Local Ordering
  → V7.2C Native Agent Action Proposal Route
 ```
 
-V7.2A、V7.2B、V7.2C 均已完成实现与对应真实验收。当前 LangGraph 编排 Menu、RAG、
-Action Proposal、Smalltalk 与 Safety Boundary；它仍是单轮工作流，没有 checkpointer、
-`thread_id`、conversation history、多轮确认或长期记忆。
+V7.2A、V7.2B、V7.2C 均已完成实现与对应真实验收。V7.3A 在既有五路图上加入可选
+`threadId`、进程内 `InMemorySaver`、最多 8 条顶层 user/assistant 消息和 Qwen Contextualizer，
+并已完成真实多轮验收。`query` 保留用户原文，`resolved_query` 只用于内部路由；历史负责语义
+消歧，实时菜单 Tool 与现有 RAG 继续提供事实。
+
+真实连续请求验证了菜单价格追问、RAG 口味追问、柠檬茶 ×2 动作提案、文本“确认”安全拒绝、
+不同 thread 隔离以及无 `threadId` 的旧客户端兼容。首次验收曾因 forced named `tool_choice` 与
+单一 normalized Tool Call 假设过窄而统一返回 `FRAMEWORK_CONTEXT_FAILED`；修复后使用普通
+Tool Calling，并严格兼容 normalized/raw/JSON 三种形态。本次真实响应走
+`normalized_tool_call`，不代表供应商永远只返回该形态。当前内存随 Python 进程重启丢失，
+不是持久化生产记忆、身份认证或交易授权。
 
 完整冻结状态与真实 commit 里程碑见 [Final Summary](docs/FINAL_SUMMARY.md)。
 
@@ -364,5 +372,7 @@ Action Proposal、Smalltalk 与 Safety Boundary；它仍是单轮工作流，没
 - 为什么 LLM 只能生成 Proposal，不能直接修改 Cart？
 - 为什么订单 Preview 后还要在 Create 阶段再次校价？
 - 为什么数据库 UNIQUE index 比 check-then-insert 更可靠？
+- 为什么 History 只用于语义消歧，价格和状态仍必须查实时 Tool？
+- 如何定位真实 Qwen Contextualizer output shape 兼容问题？
 
 可直接用于求职的材料见 [Resume Notes](docs/RESUME_NOTES.md)、[Interview Notes](docs/INTERVIEW_NOTES.md) 和 [Demo Guide](docs/DEMO_GUIDE.md)。

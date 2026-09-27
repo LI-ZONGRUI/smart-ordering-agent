@@ -4,6 +4,8 @@ from pathlib import Path
 from typing import get_type_hints
 
 import pytest
+from langchain_core.messages import BaseMessage
+from langgraph.checkpoint.memory import InMemorySaver
 from langgraph.graph import END, START
 from langgraph.graph.state import CompiledStateGraph
 
@@ -69,6 +71,32 @@ class StubActionGateway:
         }
 
 
+class StubContextualizer:
+    def __init__(self, resolutions: dict[str, str] | None = None) -> None:
+        self.resolutions = resolutions or {}
+        self.calls: list[tuple[str, tuple[str, ...]]] = []
+
+    async def resolve(self, query: str, history: tuple[BaseMessage, ...]) -> str:
+        self.calls.append((query, tuple(str(message.content) for message in history)))
+        return self.resolutions.get(query, query)
+
+
+def _workflow(
+    agent: StubMenuAgent,
+    rag_gateway: StubRagGateway,
+    action_gateway: StubActionGateway,
+    contextualizer: StubContextualizer | None = None,
+    checkpointer: InMemorySaver | None = None,
+) -> FrameworkWorkflow:
+    return build_framework_workflow(
+        agent,
+        rag_gateway,
+        action_gateway,
+        contextualizer or StubContextualizer(),
+        checkpointer=checkpointer or InMemorySaver(),
+    )
+
+
 def _edges(graph: CompiledStateGraph) -> set[tuple[str, str, bool]]:
     return {(edge.source, edge.target, edge.conditional) for edge in graph.get_graph().edges}
 
@@ -81,27 +109,39 @@ def test_project_defines_explicit_langgraph_state_and_compiled_graph() -> None:
         ".add_node(",
         ".add_edge(",
         ".add_conditional_edges(",
-        ".compile()",
+        ".compile(checkpointer=checkpointer)",
     ):
         assert marker in source
 
     hints = get_type_hints(FrameworkGraphState)
-    assert set(hints) == {"query", "route", "answer", "completed", "pendingAction"}
+    assert set(hints) == {
+        "query",
+        "resolved_query",
+        "messages",
+        "route",
+        "answer",
+        "completed",
+        "pendingAction",
+    }
     assert all(
-        forbidden not in hints
-        for forbidden in ("api_key", "secret", "messages", "system_prompt", "reasoning")
+        forbidden not in hints for forbidden in ("api_key", "secret", "system_prompt", "reasoning")
     )
     assert isinstance(
-        build_framework_graph(StubMenuAgent(), StubRagGateway(), StubActionGateway()),
+        build_framework_graph(
+            StubMenuAgent(), StubRagGateway(), StubActionGateway(), StubContextualizer()
+        ),
         CompiledStateGraph,
     )
 
 
 def test_graph_contains_expected_nodes_conditional_routes_and_end() -> None:
-    graph = build_framework_graph(StubMenuAgent(), StubRagGateway(), StubActionGateway())
+    graph = build_framework_graph(
+        StubMenuAgent(), StubRagGateway(), StubActionGateway(), StubContextualizer()
+    )
     nodes = set(graph.get_graph().nodes)
     assert nodes == {
         START,
+        "contextualize_query",
         "route_request",
         "menu_agent",
         "rag_node",
@@ -112,7 +152,8 @@ def test_graph_contains_expected_nodes_conditional_routes_and_end() -> None:
         END,
     }
     edges = _edges(graph)
-    assert (START, "route_request", False) in edges
+    assert (START, "contextualize_query", False) in edges
+    assert ("contextualize_query", "route_request", False) in edges
     assert ("route_request", "menu_agent", True) in edges
     assert ("route_request", "rag_node", True) in edges
     assert ("route_request", "native_action_node", True) in edges
@@ -175,7 +216,7 @@ async def test_menu_route_reuses_existing_agent_and_normalizes_result() -> None:
     agent = StubMenuAgent()
     rag_gateway = StubRagGateway()
     action_gateway = StubActionGateway()
-    workflow = build_framework_workflow(agent, rag_gateway, action_gateway)
+    workflow = _workflow(agent, rag_gateway, action_gateway)
     result = await workflow.run("有柠檬茶吗？")
     assert result == AgentResult(
         query="有柠檬茶吗？",
@@ -192,9 +233,7 @@ async def test_knowledge_route_reuses_existing_rag_and_never_enters_menu_agent()
     agent = StubMenuAgent()
     rag_gateway = StubRagGateway()
     action_gateway = StubActionGateway()
-    result = await build_framework_workflow(agent, rag_gateway, action_gateway).run(
-        "柠檬茶是什么味道？"
-    )
+    result = await _workflow(agent, rag_gateway, action_gateway).run("柠檬茶是什么味道？")
     assert result == AgentResult(
         query="柠檬茶是什么味道？",
         answer="来自现有 evidence-first RAG 的可信回答。",
@@ -210,7 +249,7 @@ async def test_smalltalk_uses_no_menu_agent() -> None:
     agent = StubMenuAgent()
     rag_gateway = StubRagGateway()
     action_gateway = StubActionGateway()
-    result = await build_framework_workflow(agent, rag_gateway, action_gateway).run("你好")
+    result = await _workflow(agent, rag_gateway, action_gateway).run("你好")
     assert result.answer == SMALLTALK_ANSWER
     assert result.completed is True
     assert agent.queries == []
@@ -223,9 +262,7 @@ async def test_action_route_reuses_native_agent_proposal_without_side_effect() -
     agent = StubMenuAgent()
     rag_gateway = StubRagGateway()
     action_gateway = StubActionGateway()
-    result = await build_framework_workflow(agent, rag_gateway, action_gateway).run(
-        "把柠檬茶加两杯到购物车"
-    )
+    result = await _workflow(agent, rag_gateway, action_gateway).run("把柠檬茶加两杯到购物车")
 
     assert result.pending_action == {
         "type": "add_to_cart",
@@ -261,7 +298,7 @@ async def test_unsupported_action_uses_no_tool_or_write_side_effect() -> None:
     agent = StubMenuAgent()
     rag_gateway = StubRagGateway()
     action_gateway = StubActionGateway()
-    result = await build_framework_workflow(agent, rag_gateway, action_gateway).run("直接帮我付款")
+    result = await _workflow(agent, rag_gateway, action_gateway).run("直接帮我付款")
     assert result.answer == READONLY_ANSWER
     assert result.completed is True
     assert agent.queries == []
@@ -362,10 +399,11 @@ async def test_gateway_closes_if_workflow_construction_fails(
     monkeypatch.setattr(main_module, "require_model_settings", lambda: object())
     monkeypatch.setattr(main_module, "build_menu_gateway", lambda: gateway)
     monkeypatch.setattr(main_module, "build_production_agent", lambda _gateway: object())
+    monkeypatch.setattr(
+        main_module, "build_production_contextualizer", lambda _settings: StubContextualizer()
+    )
 
-    def fail_workflow(
-        _agent: object, _rag_gateway: object, _action_gateway: object
-    ) -> FrameworkWorkflow:
+    def fail_workflow(*_args: object, **_kwargs: object) -> FrameworkWorkflow:
         raise RuntimeError("construction failure")
 
     monkeypatch.setattr(main_module, "build_framework_workflow", fail_workflow)
@@ -397,6 +435,9 @@ async def test_non_menu_routes_close_owned_gateway_without_calling_menu_agent(
     monkeypatch.setattr(main_module, "require_model_settings", lambda: object())
     monkeypatch.setattr(main_module, "build_menu_gateway", lambda: gateway)
     monkeypatch.setattr(main_module, "build_production_agent", lambda _gateway: agent)
+    monkeypatch.setattr(
+        main_module, "build_production_contextualizer", lambda _settings: StubContextualizer()
+    )
 
     runner = await main_module.get_agent_runner()
     result = await runner(query)
@@ -424,6 +465,9 @@ async def test_main_runner_routes_knowledge_to_same_authenticated_gateway(
     monkeypatch.setattr(main_module, "require_model_settings", lambda: object())
     monkeypatch.setattr(main_module, "build_menu_gateway", lambda: gateway)
     monkeypatch.setattr(main_module, "build_production_agent", lambda _gateway: agent)
+    monkeypatch.setattr(
+        main_module, "build_production_contextualizer", lambda _settings: StubContextualizer()
+    )
 
     runner = await main_module.get_agent_runner()
     result = await runner("柠檬茶是什么味道？")
@@ -452,6 +496,9 @@ async def test_main_runner_routes_action_to_same_authenticated_gateway(
     monkeypatch.setattr(main_module, "require_model_settings", lambda: object())
     monkeypatch.setattr(main_module, "build_menu_gateway", lambda: gateway)
     monkeypatch.setattr(main_module, "build_production_agent", lambda _gateway: agent)
+    monkeypatch.setattr(
+        main_module, "build_production_contextualizer", lambda _settings: StubContextualizer()
+    )
 
     runner = await main_module.get_agent_runner()
     result = await runner("把柠檬茶加两杯到购物车")

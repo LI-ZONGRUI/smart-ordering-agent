@@ -91,10 +91,11 @@ boundary. Every branch passes through
 The menu node delegates to the accepted `FrameworkAgent`; it does not call the Gateway directly
 or replace the inner LangChain Tool loop. The RAG node accepts only the graph query and returns the
 existing server-rendered answer; it does not implement Embedding, Retrieval, Grounding, or
-evidence rendering in Python. There is no checkpointer, thread ID, conversation memory or
-multi-turn history. The formal HTTP response still omits route, graph state, trace, messages,
-evidence IDs, chunks, scores, and embeddings. It may include a validated optional `pendingAction`;
-this never means the proposal has executed.
+evidence rendering in Python. V7.2 itself introduced no checkpointer or conversation history;
+V7.3A adds an optional thread-aware layer before the same five routes. The formal HTTP response
+still omits route, graph state, trace, messages, resolved queries, evidence IDs, chunks, scores,
+and embeddings. It may include a validated optional `pendingAction`; this never means the proposal
+has executed.
 
 **V7.2A is complete and has passed controlled local acceptance through the formal FastAPI
 endpoint, including smalltalk, the real Qwen menu path and the deterministic read-only boundary.**
@@ -130,8 +131,8 @@ unit price 12, total 24, and `requiresConfirmation=true`. “直接帮我付款�
 
 The proposal answer is rendered deterministically by `native_action_node` from the validated
 `pendingAction`. This replaced Native Agent free text that could imply “reply confirm and I will
-execute”, although no `thread_id`, conversation memory, multi-turn confirmation, or text-confirmed
-execution exists. The resulting user flow is proposal-only:
+execute”. V7.3A later adds short-term conversation context, but still has no multi-turn confirmation
+or text-confirmed execution. The resulting user flow is proposal-only:
 
 ```text
 User intent → Native Agent → pendingAction → frontend UI
@@ -143,6 +144,49 @@ User intent → Native Agent → pendingAction → frontend UI
 The service maps query, configuration, model request, model response, tool, recursion, timeout,
 and unknown failures to stable safe codes. Unknown details are never returned. A finite graph
 recursion limit bounds the agent cycle and FastAPI applies an overall 20-second timeout.
+
+## V7.3A multi-turn backend foundation
+
+The formal API now accepts an optional `threadId` matching `[A-Za-z0-9_-]{8,128}` and returns the
+same opaque identifier on successful threaded requests. `threadId` is conversation correlation
+only; it is not a client ID, user identity, authentication credential, authorization proof, or
+transaction capability. Requests without it continue through a separately compiled stateless graph
+and never share a default thread.
+
+LangGraph 1.2.12 supplies `InMemorySaver`, which is owned by the FastAPI application process and
+shared by threaded workflow instances. The graph stores only an eight-message window of top-level
+`HumanMessage` and final `AIMessage` values. Inner ToolMessages, raw model output, provider metadata,
+reasoning, secrets and HMAC data never enter this conversation state or the formal response.
+
+Before routing, `contextualize_query` may use Qwen with one strict Tool-Calling function to
+turn an ambiguous follow-up into an internal `resolved_query`. It cannot answer, call business
+Tools, or execute an action. The API still returns the original `query`. The resolved query is then
+routed normally, so current prices and availability come from live menu Tools and knowledge facts
+come from the existing RAG rather than stale assistant history.
+
+Action follow-ups remain proposal-only. A stored `pendingAction` is conversational/display state,
+not execution authorization. A bare “确认” follows the safety boundary and cannot mutate Cart,
+create an order, pay, or bypass the existing frontend confirmation and deterministic transaction
+path.
+
+**V7.3A multi-turn backend implementation and real Qwen/Gateway acceptance are complete.** The
+accepted sequence under the obvious acceptance-only test ID `chat_accept_03` covered a live menu
+price follow-up, a RAG taste follow-up, an add-to-cart proposal follow-up and a bare “确认” safety
+rejection. The separate acceptance-only test ID `chat_accept_04` did not inherit the lemon-tea
+context, and a request without `threadId` preserved stateless smalltalk.
+
+The first real acceptance exposed a Qwen compatibility defect: the Contextualizer forced a named
+`tool_choice` and accepted only one normalized Tool Call shape, so all three ambiguous follow-ups
+returned `FRAMEWORK_CONTEXT_FAILED`. The final implementation uses ordinary `bind_tools` and one
+strict server-validated schema across `normalized_tool_call`, `raw_openai_tool_call`, and
+`strict_json_content`. The real diagnostic run used `normalized_tool_call` for all three cases;
+this observation does not claim the provider always returns that shape.
+
+`query` remains the original user input, while internal `resolved_query` is used for routing. Graph
+updates can explicitly clear an old `pendingAction`, so checkpoint history cannot turn a previous
+proposal into execution authority. `InMemorySaver` loses all state on process restart and has no
+cross-process consistency or automatic thread eviction. It is not production persistent memory,
+user identity, authentication, authorization, or a transaction token.
 
 ## Evolution path
 

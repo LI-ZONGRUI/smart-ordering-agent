@@ -22,8 +22,8 @@ LangChain `create_agent`、Structured Tools、Gateway 和真实菜单数据的�
 均已完成真实验收。V7.2C 再加入 `action_query → native_action_node`，经同一认证 Gateway 的
 `agent_propose_action` 调用现有 Native Agent，并已完成真实 action proposal 与支付拒绝验收。
 当前五条闭合路由为 `menu_query`、`knowledge_query`、`action_query`、`smalltalk` 和
-`unsupported_action`。该图没有引入记忆、checkpointer 或多轮历史，该服务也不拥有数据库或
-交易职责。
+`unsupported_action`。V7.3A 通过可选 `threadId`、进程内 `InMemorySaver` 和受限 Qwen
+Contextualizer 增加短期多轮语义上下文；服务仍不拥有数据库或交易职责。
 
 V7.1B-1 已把 Native Agent 的三个只读菜单能力抽取到 uniCloud Shared Menu Domain，并让
 Native Agent 与经过 HMAC-SHA256 认证的 URL 化 Framework Gateway 复用同一实现。Shared
@@ -56,13 +56,16 @@ graph TB
 
   subgraph FrameworkService[V7 Independent Python Framework Service]
     FASTAPI[Python 3.11 + FastAPI]
-    LG[LangGraph StateGraph<br/>Top-level Routing]
+    MEM[InMemorySaver<br/>Optional threadId]
+    CTX[Qwen Contextualizer<br/>standalone query]
+    LG[LangGraph StateGraph<br/>Five-route Routing]
     LC[LangChain create_agent]
     GW[MenuGateway Port]
     RGW[RagGateway Port]
     AGW[ActionGateway Port]
     SMALL[Smalltalk / Read-only Boundary]
-    FASTAPI --> LG
+    FASTAPI --> CTX --> LG
+    MEM -. threaded checkpoint .-> LG
     LG --> LC --> GW
     LG --> RGW
     LG --> AGW
@@ -375,7 +378,41 @@ requestId
 - Same key + different fingerprint/clientId：`ORDER_IDEMPOTENCY_CONFLICT`。
 - check-then-insert 只能优化普通重试；并发唯一性最终由数据库 UNIQUE index 保证。
 
-## 8. Evaluation 与测试
+## 8. V7.3A Multi-turn Context
+
+```text
+POST /v1/agent/run { query, threadId? }
+ → load same-process thread state when threadId exists
+ → contextualize ambiguous follow-up
+ → resolved_query
+ → existing five-route graph
+ → normalize_result
+ → retain bounded HumanMessage / final AIMessage history
+ → checkpoint
+```
+
+`threadId` 是可选的 conversation correlation identifier，trim 后必须匹配
+`[A-Za-z0-9_-]{8,128}`；它不是身份、认证、授权或交易凭证。无 `threadId` 请求走独立的无状态
+图，不共享默认线程。`FrameworkGraphState.query` 保留用户原始输入，`resolved_query` 是内部
+standalone query，正式 API 只返回前者。
+
+LangGraph 1.2.12 通过 `StateGraph.compile(checkpointer=...)` 接入 `InMemorySaver`，实例保存在
+FastAPI `app.state`，只在当前 Python 进程内有效。历史最多保留 8 条顶层 `HumanMessage` 与最终
+`AIMessage`，不保存 ToolMessage、system prompt、reasoning、provider metadata、raw response、
+HMAC 或 secret。进程重启会丢失状态。
+
+真实验收测试 ID `chat_accept_03` 的连续请求覆盖菜单价格追问、RAG 口味追问和柠檬茶 ×2
+proposal；随后“确认”仍进入安全边界，不执行购物车、订单或支付。新的验收测试 ID
+`chat_accept_04` 从“多少钱？”开始时没有继承柠檬茶上下文，验证了 conversation state
+isolation。无 `threadId` 的“你好”保持旧有单轮行为。Graph 更新可以显式清理旧
+`pendingAction`；checkpoint 中的 proposal 不是执行授权。
+
+首次真实 follow-up 全部返回 `FRAMEWORK_CONTEXT_FAILED`，原因是 Contextualizer 使用 forced
+named `tool_choice` 且只接受单一 normalized Tool Call。修复后使用普通 `bind_tools`，服务器仍
+严格校验 schema，并兼容 `normalized_tool_call`、`raw_openai_tool_call` 和
+`strict_json_content`。本次真实 Qwen 单独验收走 `normalized_tool_call`；其他两条是兼容保护。
+
+## 9. Evaluation 与测试
 
 RAG 端到端评测使用21条知识与12条固定 Query：
 
@@ -388,11 +425,11 @@ RAG 端到端评测使用21条知识与12条固定 Query：
 - Evidence Hit Rate：5/6 supported，83.33%。
 - Server Grounding Pass：12/12，100%。
 
-这是项目级小样本评测，不是生产 Benchmark。V6 冻结时为747项自动化测试；V7.2C
-Finalization 时完整回归为832项 JavaScript 测试与152项 Python 测试，并另有微信开发者工具、
+这是项目级小样本评测，不是生产 Benchmark。V6 冻结时为747项自动化测试；V7.3A
+Finalization 时完整回归为832项 JavaScript 测试与182项 Python 测试，并另有微信开发者工具、
 真实 uniCloud 数据库、管理入口、URL 化 Gateway 与五条 LangGraph 路由验收记录。
 
-## 9. 信任边界
+## 10. 信任边界
 
 | 输入或组件 | 信任方式 |
 | --- | --- |
@@ -404,20 +441,20 @@ Finalization 时完整回归为832项 JavaScript 测试与152项 Python 测试�
 | requestId | 幂等键，不是授权、认证或 orderNo |
 | clientId | 开发期隔离，不是正式身份认证 |
 
-## 10. Current Scope / Future Work
+## 11. Current Scope / Future Work
 
-- 单轮 RAG 与单次 Agent Task，没有 conversation memory。
+- RAG 接口仍为单轮；Python LangGraph 已有同进程、同 `threadId` 的短期 conversation context。
 - RAG 不是 LangChain Agent Tool；LangGraph 只在独立 `knowledge_query` 分支调用它。
 - 21 chunks、12-query baseline，规模有限。
 - Pinia Cart、Pending Action 与未决提交恢复不跨小程序重启持久化。
 - 没有支付、库存事务、uni-id 或 exactly-once distributed transaction。
 - 没有生产规模 Vector DB、ANN、分布式检索和生产治理。
-- 已有 Native Agent proposal-only LangGraph delegation；没有 checkpointer、thread ID、
-  conversation history、multi-turn state、多轮确认、长期记忆或 Python Framework 前端聊天 UI。
+- 已有进程内 `InMemorySaver`、可选 `threadId` 与受限历史；没有持久化 checkpointer、跨进程/
+  跨设备状态、conversation list/history API、多轮文本确认执行、长期记忆或 Python Framework 前端聊天 UI。
 
 下一步应先扩充评测与失败样本，再基于冻结 baseline 比较检索、Evidence Selection 和持久化恢复方案，而不是直接扩大 Agent 权限。
 
-## 11. 文档索引
+## 12. 文档索引
 
 - [RAG V4 Summary](rag/V4_SUMMARY.md)
 - [RAG Answer Evaluation](rag/ANSWER_EVALUATION.md)

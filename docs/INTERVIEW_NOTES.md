@@ -2,7 +2,7 @@
 
 ## 30 秒项目介绍
 
-我用 Vue 3、uni-app、Pinia 和 uniCloud 做了一个微信智能点餐项目。除了菜单、购物车和云端订单闭环，还实现了 Evidence-first RAG、原生 Function Calling Ordering Agent，以及独立的 Python + FastAPI + LangChain + LangGraph 智能路由。模型负责开放式理解、证据或工具选择和动作提案；价格、状态、副作用、订单确认和幂等由服务器与用户确认控制。当前 JS 832 项、Python 152 项自动化测试通过，并完成真实微信端、uniCloud 与 Qwen/LangChain/LangGraph 链路验收。
+我用 Vue 3、uni-app、Pinia 和 uniCloud 做了一个微信智能点餐项目。除了菜单、购物车和云端订单闭环，还实现了 Evidence-first RAG、原生 Function Calling Ordering Agent，以及独立的 Python + FastAPI + LangChain + LangGraph 智能路由。模型负责开放式理解、证据或工具选择和动作提案；价格、状态、副作用、订单确认和幂等由服务器与用户确认控制。当前 JS 832 项、Python 182 项自动化测试通过，并完成真实微信端、uniCloud 与 Qwen/LangChain/LangGraph 链路验收。
 
 ## 90 秒项目介绍
 
@@ -32,6 +32,11 @@ V7.2C 增加 `action_query → native_action_node`。该节点经认证 Gateway 
 单价 12 元、合计 24 元并要求确认；“直接帮我付款”仍进入 `unsupported_action`，没有
 `pendingAction`。模型负责理解意图、选择 Tool 和生成 proposal，实时状态、价格、用户确认、
 幂等与交易持久化仍由确定性代码负责。
+
+V7.3A 再通过可选 `threadId` 和进程内 `InMemorySaver` 增加短期多轮上下文。Qwen
+Contextualizer 只把“多少钱？”、“它是什么味道？”等 follow-up 转成 standalone query；历史只
+解决指代，价格仍查实时菜单 Tool，口味事实仍走现有 RAG。真实连续验收还验证了动作追问只生成
+proposal、文本“确认”不执行、线程隔离和无 threadId 兼容。
 
 ## 3 分钟项目介绍
 
@@ -71,7 +76,7 @@ Checkout 完全走确定性服务端逻辑，不经过 Qwen。Preview 先校价�
 
 ### 5. 结果和边界
 
-项目完成真实微信端、uniCloud、RAG、Agent、购物车确认和持久化订单验收。当前仍是 21 条知识、12 条问题的小规模单轮系统，没有支付、库存事务、多轮记忆或生产规模 Vector DB。
+项目完成真实微信端、uniCloud、RAG、Agent、购物车确认、持久化订单和同进程短期多轮验收。当前仍是 21 条知识、12 条问题的小规模系统，没有支付、库存事务、持久化长期记忆或生产规模 Vector DB。
 
 ## 架构讲解顺序
 
@@ -197,15 +202,15 @@ requestId 是客户端为一次提交意图生成的幂等键；orderNo 是订�
 
 ### 26. 当前系统还有什么问题？
 
-知识只有 21 chunks，评测只有 12 query；RAG 与 Agent 均无多轮记忆；购物车和 Pending Action 不持久化；未决订单提交状态不跨重启恢复；没有正式登录、支付、库存事务、exactly-once 分布式事务或生产规模向量检索。
+知识只有 21 chunks，评测只有 12 query；短期对话状态随 Python 进程重启丢失，也不跨设备；购物车和 Pending Action 不持久化；未决订单提交状态不跨重启恢复；没有正式登录、支付、库存事务、exactly-once 分布式事务或生产规模向量检索。
 
 ### 27. 为什么同时使用 LangGraph 和 LangChain？
 
 V7.1C 已有稳定的 LangChain Tool Agent，但缺少项目级显式 Workflow。LangGraph 负责请求
 路由、Graph State 和节点流转；菜单节点继续复用 LangChain `create_agent`，知识节点复用
 现有 uniCloud RAG。这样把“走哪条业务路径”“菜单查询中如何调用 Tool”和“知识问答如何
-grounding”分开。V7.2C 的 Native Agent 路由也只生成 proposal；当前图没有 checkpointer、
-`thread_id`、conversation history、多轮状态或多轮确认。
+grounding”分开。V7.2C 的 Native Agent 路由也只生成 proposal；V7.3A 通过可选 `threadId`、
+进程内 `InMemorySaver` 和受限 Contextualizer 增加短期多轮语义上下文，但没有持久化或文本确认执行。
 
 ### 28. 为什么不让 LangGraph 直接执行购物车或订单？
 
@@ -214,8 +219,8 @@ LLM 适合 intent understanding、Tool selection 和 proposal generation，但�
 `User intent → Native Agent → pendingAction → frontend UI → explicit confirmation → deterministic execution`。
 LangGraph 与 Native Agent 都不会因为产生 `pendingAction` 而自动修改购物车或创建订单。
 
-早期真实验收中，Native Agent 自由文本曾提示“回复确认，我再执行”，但系统没有 `thread_id`、
-conversation memory 或文本确认后的执行能力。最终由 `native_action_node` 根据已验证的
+早期真实验收中，Native Agent 自由文本曾提示“回复确认，我再执行”，但系统没有文本确认后的
+执行能力。即使 V7.3A 增加 conversation history，该权限边界也没有扩大。最终由 `native_action_node` 根据已验证的
 `pendingAction` 确定性生成提示，名称、数量、单价和总价都来自该合同，从而避免错误能力暗示。
 
 ### 29. 为什么不把 RAG 复制到 Python？
@@ -223,6 +228,19 @@ conversation memory 或文本确认后的执行能力。最终由 `native_action
 uniCloud RAG 已有稳定的 Embedding、Exact Retrieval、Top-3、Evidence-first grounding 和
 服务器确定性渲染。Python 这一层只需要 orchestration，因此通过认证 Gateway 复用正式能力，
 保持 single source of truth，也避免两套知识副本、向量和 Retrieval 实现随时间漂移。
+
+### 30. 为什么 History 不能直接作为事实源？
+
+History 用来判断“它”“多少钱”“那来两杯”指向哪个菜品，但历史价格、库存和供应状态可能已
+变化。Contextualizer 只生成 standalone query；菜单分支仍调用实时 Tool，知识分支仍调用现有
+RAG。这样把 semantic reference resolution 和 factual source of truth 分开。
+
+### 31. V7.3A 的 Contextualizer 兼容问题是什么？
+
+旧实现使用 forced named `tool_choice`，并只接受一种 normalized Tool Call。第一次真实多轮验收中
+三个 follow-up 因输出形态假设过窄全部返回 `FRAMEWORK_CONTEXT_FAILED`。修复后改用普通
+Tool Calling，并对 normalized Tool Call、原始 OpenAI Tool Call 和严格 JSON content 做相同的
+窄 schema 校验。真实单独验收走 `normalized_tool_call`，但没有据此假设供应商永远只返回该形态。
 
 ## 如果再给两周
 
@@ -235,14 +253,14 @@ uniCloud RAG 已有稳定的 Embedding、Exact Retrieval、Top-3、Evidence-firs
 ## Current Scope / Future Work
 
 - Knowledge Base：21 chunks；baseline：12 fixed queries。
-- RAG 是 single-turn；Agent 没有 multi-turn conversation memory。
+- RAG 接口是 single-turn；Python LangGraph 只提供同进程、同 `threadId` 的短期 conversation context。
 - RAG 不是 LangChain Agent Tool；LangGraph 只在独立知识分支调用它。
 - Cart 在 Pinia；Pending Action 不持久化。
 - 未决 requestId 与 frozen payload 不跨刷新或小程序重启恢复。
 - 没有支付、库存事务或 exactly-once distributed transaction。
 - 没有 production-scale Vector DB。
-- LangGraph 当前负责五路单轮顶层路由，并包含 proposal-only Native Agent integration；没有
-  checkpointer、`thread_id`、conversation history、multi-turn state、多轮确认、长期记忆或
+- LangGraph 已有可选 `threadId`、进程内 `InMemorySaver`、受限 history 和上下文化；没有持久化
+  checkpointer、跨进程/跨设备状态、conversation list/history API、多轮文本确认执行、长期记忆或
   前端 ChatGPT 风格聊天 UI。
 
 这些边界说明当前工程验证覆盖到哪里，也给出了下一步可以被独立评测的方向。

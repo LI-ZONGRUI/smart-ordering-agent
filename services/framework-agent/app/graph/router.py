@@ -25,6 +25,7 @@ _ACTION_MARKERS = ("加入购物车", "加到购物车", "放进购物车", "加
 _ACTION_QUANTITY = re.compile(
     r"(?:加|来)\s*(?:一|两|二|三|四|五|六|七|八|九|十|\d+)\s*(?:份|杯|个)"
 )
+_CONFIRMATION_ONLY = re.compile(r"^(?:确认|确定|好的?确认|就这样)[!！。,.，\s]*$")
 _KNOWLEDGE_MARKERS = (
     "口味",
     "味道",
@@ -45,6 +46,8 @@ def classify_request(query: str) -> FrameworkRoute:
     normalized = query.strip()
     if _SMALLTALK.fullmatch(normalized):
         return "smalltalk"
+    if _CONFIRMATION_ONLY.fullmatch(normalized):
+        return "unsupported_action"
     if any(marker in normalized for marker in _UNSUPPORTED_ACTION_MARKERS):
         return "unsupported_action"
     if any(marker in normalized for marker in _ACTION_MARKERS) or _ACTION_QUANTITY.search(
@@ -57,7 +60,7 @@ def classify_request(query: str) -> FrameworkRoute:
 
 
 def route_request(state: FrameworkGraphState) -> dict[str, FrameworkRoute]:
-    return {"route": classify_request(state["query"])}
+    return {"route": classify_request(state["resolved_query"])}
 
 
 def select_route(state: FrameworkGraphState) -> FrameworkRoute:

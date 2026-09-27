@@ -292,6 +292,11 @@ async def test_production_provider_uses_real_http_gateway(
         return FakeAgent()
 
     monkeypatch.setattr(main_module, "build_production_agent", fake_agent_builder)
+    monkeypatch.setattr(
+        main_module,
+        "build_production_contextualizer",
+        lambda _settings: object(),
+    )
     runner = await main_module.get_agent_runner()
     try:
         await runner("有柠檬茶吗？")

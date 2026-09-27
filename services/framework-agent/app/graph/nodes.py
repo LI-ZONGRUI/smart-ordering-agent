@@ -3,7 +3,10 @@
 from collections.abc import Awaitable, Callable
 from typing import Protocol
 
+from langchain_core.messages import AIMessage, HumanMessage
+
 from app.agent import AgentResult
+from app.contextualizer import QueryContextualizer, needs_contextualization
 from app.errors import internal_error
 from app.gateways.action import ActionProposalGateway, PendingAction
 from app.gateways.rag import RagGateway
@@ -41,8 +44,8 @@ def build_menu_agent_node(agent: MenuAgentRunner) -> GraphNode:
     """Delegate menu reasoning to the accepted LangChain Agent without bypassing its Tools."""
 
     async def menu_agent(state: FrameworkGraphState) -> dict[str, object]:
-        result: AgentResult = await agent.run(state["query"])
-        return {"answer": result.answer, "completed": result.completed}
+        result: AgentResult = await agent.run(state["resolved_query"])
+        return {"answer": result.answer, "completed": result.completed, "pendingAction": None}
 
     return menu_agent
 
@@ -51,8 +54,8 @@ def build_rag_node(gateway: RagGateway) -> GraphNode:
     """Delegate knowledge questions to the existing evidence-first uniCloud RAG."""
 
     async def rag_node(state: FrameworkGraphState) -> dict[str, object]:
-        result = await gateway.answer_knowledge(state["query"])
-        return {"answer": result["answer"], "completed": True}
+        result = await gateway.answer_knowledge(state["resolved_query"])
+        return {"answer": result["answer"], "completed": True, "pendingAction": None}
 
     return rag_node
 
@@ -61,7 +64,7 @@ def build_native_action_node(gateway: ActionProposalGateway) -> GraphNode:
     """Delegate safe proposals to the Native Agent; never execute the proposed action."""
 
     async def native_action_node(state: FrameworkGraphState) -> dict[str, object]:
-        result = await gateway.propose_action(state["query"])
+        result = await gateway.propose_action(state["resolved_query"])
         pending_action = result["pendingAction"]
         output: dict[str, object] = {
             # Native Agent的自由文本仅用于无提案结果；合法提案由服务器确定性渲染，
@@ -81,11 +84,28 @@ def build_native_action_node(gateway: ActionProposalGateway) -> GraphNode:
 
 
 async def smalltalk_response(_state: FrameworkGraphState) -> dict[str, object]:
-    return {"answer": SMALLTALK_ANSWER, "completed": True}
+    return {"answer": SMALLTALK_ANSWER, "completed": True, "pendingAction": None}
 
 
 async def readonly_boundary(_state: FrameworkGraphState) -> dict[str, object]:
-    return {"answer": READONLY_ANSWER, "completed": True}
+    return {"answer": READONLY_ANSWER, "completed": True, "pendingAction": None}
+
+
+def build_contextualize_query_node(contextualizer: QueryContextualizer) -> GraphNode:
+    """Resolve only ambiguous follow-ups using a bounded user/assistant history."""
+
+    async def contextualize_query(state: FrameworkGraphState) -> dict[str, object]:
+        query = state["query"]
+        messages = state.get("messages", [])
+        history = (
+            tuple(messages[:-1]) if messages and isinstance(messages[-1], HumanMessage) else ()
+        )
+        if not needs_contextualization(query, has_history=bool(history)):
+            return {"resolved_query": query}
+        resolved_query = await contextualizer.resolve(query, history)
+        return {"resolved_query": resolved_query}
+
+    return contextualize_query
 
 
 def normalize_result(state: FrameworkGraphState) -> dict[str, object]:
@@ -99,7 +119,12 @@ def normalize_result(state: FrameworkGraphState) -> dict[str, object]:
         or route not in FRAMEWORK_ROUTES
     ):
         raise internal_error()
-    result: dict[str, object] = {"answer": answer.strip(), "completed": completed}
+    normalized_answer = answer.strip()
+    result: dict[str, object] = {
+        "answer": normalized_answer,
+        "completed": completed,
+        "messages": [AIMessage(content=normalized_answer)],
+    }
     pending_action = state.get("pendingAction")
     if pending_action is not None:
         result["pendingAction"] = pending_action
