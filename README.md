@@ -311,13 +311,14 @@ pnpm run rag:check-source
 git diff --check
 ```
 
-当前回归：**832 项 JavaScript 测试与 182 项 Python 测试通过**。测试覆盖 RAG 索引/检索/生成/评测、Agent Tool 与多步循环、五路显式 LangGraph 路由、多轮上下文化、动作提案、订单预览/创建、幂等并发语义、前端状态以及冻结文件未漂移。
+当前回归：**832 项 JavaScript 测试与 197 项 Python 测试通过**。测试覆盖 RAG 索引/检索/生成/评测、Agent Tool 与多步循环、五路显式 LangGraph 路由、多轮上下文化、SQLite 重启恢复、capability token、History API、动作提案、订单预览/创建、幂等并发语义、前端状态以及冻结文件未漂移。
 
 ## Known Limitations / Future Work
 
 - Knowledge Base 只有21条人工审核 chunks；12-query baseline 是项目级小样本评测。
-- RAG 接口本身仍是单轮；Python LangGraph 通过可选 `threadId` 和进程内 `InMemorySaver` 提供短期多轮语义上下文。
-- 当前没有持久化 checkpointer、跨进程/跨设备历史、多轮文本确认执行、长期记忆或 ChatGPT 风格前端。
+- RAG 接口本身仍是单轮；Python LangGraph 通过显式 durable conversation 提供受限多轮语义上下文。
+- `AsyncSqliteSaver` 已真实验证同一持久文件系统上的进程重启恢复，但不提供跨机器、多实例或账户级跨设备同步。
+- 当前没有 conversation list、token expiry/rotation/revocation UI、多轮文本确认执行、长期用户画像或 ChatGPT 风格微信前端。
 - RAG 没有注册成 Agent Tool，两项能力保持独立。
 - 购物车仍在客户端 Pinia；Pending Action 不持久化。
 - 未决 requestId 与 frozen payload 不跨页面刷新或小程序重启恢复。
@@ -348,6 +349,8 @@ Local Ordering
  → V7.2A Explicit StateGraph
  → V7.2B RAG Route Integration
  → V7.2C Native Agent Action Proposal Route
+ → V7.3A Thread-aware Multi-turn Backend
+ → V7.3B Persistent Conversation + Safe History API
 ```
 
 V7.2A、V7.2B、V7.2C 均已完成实现与对应真实验收。V7.3A 在既有五路图上加入可选
@@ -359,8 +362,21 @@ V7.2A、V7.2B、V7.2C 均已完成实现与对应真实验收。V7.3A 在既有�
 不同 thread 隔离以及无 `threadId` 的旧客户端兼容。首次验收曾因 forced named `tool_choice` 与
 单一 normalized Tool Call 假设过窄而统一返回 `FRAMEWORK_CONTEXT_FAILED`；修复后使用普通
 Tool Calling，并严格兼容 normalized/raw/JSON 三种形态。本次真实响应走
-`normalized_tool_call`，不代表供应商永远只返回该形态。当前内存随 Python 进程重启丢失，
-不是持久化生产记忆、身份认证或交易授权。
+`normalized_tool_call`，不代表供应商永远只返回该形态。
+
+V7.3B 使用 `langgraph-checkpoint-sqlite==3.1.1` 的 `AsyncSqliteSaver`：服务端通过
+`POST /v1/conversations` 生成 `threadId + conversationToken`，只保存 token 的 SHA-256 digest，
+并以 `hmac.compare_digest` 校验。真实验收中，Process 1 完成“有柠檬茶吗？”后完全停止，
+Process 2 使用同一 SQLite 文件、threadId 与 token 继续询问“多少钱？”，成功恢复语义上下文，
+同时价格仍重新进入 live menu path。History API 成功读取两轮安全 user/assistant 消息，错误
+token 返回 `FRAMEWORK_CONVERSATION_ACCESS_DENIED`。这只证明同一持久文件系统上的进程重启
+恢复；conversationToken 不是用户身份或交易授权。
+
+当前阶段状态：
+
+- V7.3A Thread-aware multi-turn backend：✅
+- V7.3B Persistent conversation + safe History API：✅
+- 下一阶段 V7.3C WeChat ChatGPT-style Chat UI：尚未实现
 
 完整冻结状态与真实 commit 里程碑见 [Final Summary](docs/FINAL_SUMMARY.md)。
 

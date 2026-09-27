@@ -6,3 +6,6 @@ __pycache__/
 *.pyc
 .coverage
 htmlcov/
+data/*.sqlite3
+data/*.sqlite3-wal
+data/*.sqlite3-shm

@@ -188,6 +188,42 @@ proposal into execution authority. `InMemorySaver` loses all state on process re
 cross-process consistency or automatic thread eviction. It is not production persistent memory,
 user identity, authentication, authorization, or a transaction token.
 
+## V7.3B persistent conversation foundation
+
+V7.3B adds a separate opt-in durable mode using the official `AsyncSqliteSaver`, matching the
+service's asynchronous `ainvoke` workflow. `FRAMEWORK_CHECKPOINT_DB_PATH` selects the database;
+when it is empty, legacy stateless and V7.3A process-local calls continue to work while durable
+conversation APIs fail closed. FastAPI owns the saver and registry connections in its lifespan,
+initializes their schemas idempotently, and closes both connections at shutdown.
+
+`POST /v1/conversations` creates a server-owned `threadId` and a 32-byte URL-safe random
+`conversationToken`. The token is returned once. The registry stores only its SHA-256 digest and
+uses `hmac.compare_digest`; unknown threads and wrong tokens share one safe access-denied response.
+Token-bearing `POST /v1/agent/run` and
+`GET /v1/conversations/{threadId}/messages` require the matching pair. The capability grants access
+only to that conversation and never authorizes cart mutation, order creation, confirmation, or
+payment. V7.3B has no expiry, rotation, list, rename, search, delete-all, or account binding.
+
+LangGraph checkpoint state is the canonical message source. `messages` remains capped at eight for
+the Contextualizer, while `archiveMessages` is capped at 100 and is written in the same graph
+checkpoint. The History API projects only plain `HumanMessage`/`AIMessage` values into
+`{role, content}`; ToolMessages, pending state, route, resolved query, checkpoint metadata,
+reasoning, prompts, provider metadata and raw responses are excluded. `pendingAction` remains graph
+proposal state and is not promoted into the public history archive or transaction authority.
+
+The real restart acceptance created a durable conversation in Process 1, answered “有柠檬茶吗？”,
+fully stopped that process, and started Process 2 with the same SQLite path. The same thread and
+valid token then resolved “多少钱？” as a lemon-tea follow-up while still calling the live menu path
+and returning the current 12-yuan in-stock fact. The History API returned both safe user/assistant
+turns. An obviously wrong test token returned `FRAMEWORK_CONVERSATION_ACCESS_DENIED` and disclosed
+no history or existence detail. Offline reconstruction tests cover the same boundary.
+
+**V7.3B process-restart persistence and safe History API acceptance are complete.** SQLite is
+suitable for local/single-host validation. Durability requires a
+persistent mounted file; this design does not claim multi-instance consistency, distributed
+concurrency safety, cross-device identity, or production high availability. Concurrent writes to
+one conversation are not given application-level merge guarantees in V7.3B.
+
 ## Evolution path
 
 ### V7.1B

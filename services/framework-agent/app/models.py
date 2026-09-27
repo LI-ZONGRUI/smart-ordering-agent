@@ -56,3 +56,28 @@ class ErrorResponse(BaseModel):
 
     errCode: str
     errMsg: str
+
+
+class ConversationCreateResponse(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    errCode: int = 0
+    threadId: str
+    conversationToken: str
+
+
+class ConversationMessageResponse(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    role: Literal["user", "assistant"]
+    content: str
+
+
+class ConversationHistoryResponse(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    errCode: int = 0
+    threadId: str
+    createdAt: str
+    updatedAt: str
+    messages: list[ConversationMessageResponse]

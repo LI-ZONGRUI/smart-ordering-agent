@@ -118,6 +118,7 @@ def test_project_defines_explicit_langgraph_state_and_compiled_graph() -> None:
         "query",
         "resolved_query",
         "messages",
+        "archiveMessages",
         "route",
         "answer",
         "completed",

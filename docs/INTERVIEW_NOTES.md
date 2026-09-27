@@ -38,6 +38,11 @@ Contextualizer 只把“多少钱？”、“它是什么味道？”等 follow-
 解决指代，价格仍查实时菜单 Tool，口味事实仍走现有 RAG。真实连续验收还验证了动作追问只生成
 proposal、文本“确认”不执行、线程隔离和无 threadId 兼容。
 
+V7.3B 使用 `AsyncSqliteSaver` 将显式创建的 durable conversation 保存到 SQLite。Process 1 完全
+停止后，Process 2 使用同一文件、threadId 与 capability token 成功恢复柠檬茶上下文；价格仍
+重新查询实时 Tool。threadId 不是秘密，因此创建时另发一次性返回的高熵 token，服务端只保存
+SHA-256 digest 并用 constant-time compare 校验。History API 只投影安全 user/assistant 文本。
+
 ## 3 分钟项目介绍
 
 ### 1. 业务基础
@@ -76,7 +81,7 @@ Checkout 完全走确定性服务端逻辑，不经过 Qwen。Preview 先校价�
 
 ### 5. 结果和边界
 
-项目完成真实微信端、uniCloud、RAG、Agent、购物车确认、持久化订单和同进程短期多轮验收。当前仍是 21 条知识、12 条问题的小规模系统，没有支付、库存事务、持久化长期记忆或生产规模 Vector DB。
+项目完成真实微信端、uniCloud、RAG、Agent、购物车确认、持久化订单和同一持久文件系统的多轮重启恢复验收。当前仍是 21 条知识、12 条问题的小规模系统，没有支付、库存事务、分布式会话存储、长期用户画像或生产规模 Vector DB。
 
 ## 架构讲解顺序
 
@@ -202,15 +207,15 @@ requestId 是客户端为一次提交意图生成的幂等键；orderNo 是订�
 
 ### 26. 当前系统还有什么问题？
 
-知识只有 21 chunks，评测只有 12 query；短期对话状态随 Python 进程重启丢失，也不跨设备；购物车和 Pending Action 不持久化；未决订单提交状态不跨重启恢复；没有正式登录、支付、库存事务、exactly-once 分布式事务或生产规模向量检索。
+知识只有 21 chunks，评测只有 12 query；SQLite 会话只证明同一持久文件系统上的重启恢复，不支持跨机器、多实例或账户级跨设备同步；购物车和 Pending Action 不持久化；未决订单提交状态不跨重启恢复；没有正式登录、支付、库存事务、exactly-once 分布式事务或生产规模向量检索。
 
 ### 27. 为什么同时使用 LangGraph 和 LangChain？
 
 V7.1C 已有稳定的 LangChain Tool Agent，但缺少项目级显式 Workflow。LangGraph 负责请求
 路由、Graph State 和节点流转；菜单节点继续复用 LangChain `create_agent`，知识节点复用
 现有 uniCloud RAG。这样把“走哪条业务路径”“菜单查询中如何调用 Tool”和“知识问答如何
-grounding”分开。V7.2C 的 Native Agent 路由也只生成 proposal；V7.3A 通过可选 `threadId`、
-进程内 `InMemorySaver` 和受限 Contextualizer 增加短期多轮语义上下文，但没有持久化或文本确认执行。
+grounding”分开。V7.2C 的 Native Agent 路由也只生成 proposal；V7.3A 增加进程内多轮语义
+上下文，V7.3B 进一步以 `AsyncSqliteSaver` 和 capability token 提供持久恢复，但仍没有文本确认执行。
 
 ### 28. 为什么不让 LangGraph 直接执行购物车或订单？
 
@@ -242,6 +247,23 @@ RAG。这样把 semantic reference resolution 和 factual source of truth 分开
 Tool Calling，并对 normalized Tool Call、原始 OpenAI Tool Call 和严格 JSON content 做相同的
 窄 schema 校验。真实单独验收走 `normalized_tool_call`，但没有据此假设供应商永远只返回该形态。
 
+### 32. 为什么从 InMemorySaver 升级到 SQLite？
+
+V7.3A 的进程内状态在 Python 重启后丢失。`AsyncSqliteSaver` 与现有 `ainvoke` 调用方式匹配，
+能够在同一持久文件系统上恢复 checkpoint。它适合当前单机项目验收，但不是分布式数据库或
+多实例一致性方案。
+
+### 33. 为什么知道 threadId 仍不能直接读取历史？
+
+threadId 是 correlation identifier，不是秘密或身份凭据。只凭可猜测或泄露的 ID 读取历史会
+造成 conversation disclosure。因此服务端创建 durable conversation 时同时生成高熵 capability
+token，只保存 SHA-256 digest，并要求 History/Resume 同时提交 threadId 与 token。
+
+### 34. 为什么没有 conversation list？
+
+当前没有成熟用户身份与 ownership 模型，服务端无法安全判断“哪些会话属于当前用户”。所以
+只提供创建会话、凭 capability 恢复指定会话和读取指定历史，不提供全局 list。
+
 ## 如果再给两周
 
 1. 扩大并版本化独立评测集，加入更多同义问法、困难拒答和回归样本。
@@ -253,14 +275,14 @@ Tool Calling，并对 normalized Tool Call、原始 OpenAI Tool Call 和严格 J
 ## Current Scope / Future Work
 
 - Knowledge Base：21 chunks；baseline：12 fixed queries。
-- RAG 接口是 single-turn；Python LangGraph 只提供同进程、同 `threadId` 的短期 conversation context。
+- RAG 接口是 single-turn；Python LangGraph 的 durable conversation 已支持同一持久文件系统重启恢复。
 - RAG 不是 LangChain Agent Tool；LangGraph 只在独立知识分支调用它。
 - Cart 在 Pinia；Pending Action 不持久化。
 - 未决 requestId 与 frozen payload 不跨刷新或小程序重启恢复。
 - 没有支付、库存事务或 exactly-once distributed transaction。
 - 没有 production-scale Vector DB。
-- LangGraph 已有可选 `threadId`、进程内 `InMemorySaver`、受限 history 和上下文化；没有持久化
-  checkpointer、跨进程/跨设备状态、conversation list/history API、多轮文本确认执行、长期记忆或
-  前端 ChatGPT 风格聊天 UI。
+- LangGraph 已有 `AsyncSqliteSaver`、capability token、受限 history 和上下文化；没有跨机器或
+  多实例一致性、账户级跨设备状态、conversation list、token expiry/rotation/revocation、多轮文本
+  确认执行、长期用户画像或前端 ChatGPT 风格聊天 UI。
 
 这些边界说明当前工程验证覆盖到哪里，也给出了下一步可以被独立评测的方向。

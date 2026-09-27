@@ -76,7 +76,12 @@ class FrameworkWorkflow:
     threaded_graph: CompiledStateGraph
 
     async def run(self, query: str, *, thread_id: str | None = None) -> AgentResult:
-        inputs = {"query": query, "messages": [HumanMessage(content=query)]}
+        human_message = HumanMessage(content=query)
+        inputs = {
+            "query": query,
+            "messages": [human_message],
+            "archiveMessages": [human_message],
+        }
         if thread_id is None:
             state = await self.graph.ainvoke(inputs)
         else:

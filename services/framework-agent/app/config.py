@@ -19,6 +19,7 @@ class FrameworkSettings(BaseSettings):
     framework_agent_llm_model: str = "qwen3.8-flash"
     framework_gateway_url: str = ""
     framework_gateway_secret: SecretStr = SecretStr("")
+    framework_checkpoint_db_path: str = ""
 
 
 @lru_cache

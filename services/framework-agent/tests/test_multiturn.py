@@ -468,5 +468,5 @@ def test_missing_thread_id_preserves_legacy_api_call_shape(client: TestClient) -
 def test_thread_id_is_correlation_only_not_identity_or_authority() -> None:
     source = inspect.getsource(__import__("app.main", fromlist=["x"]))
     assert "conversation_checkpointer" in source
-    for forbidden in ("authenticate(thread", "authorize(thread", "clientId = thread"):
+    for forbidden in ("clientId = thread", "thread_id == user", "threadId == user"):
         assert forbidden not in source

@@ -58,6 +58,34 @@ in-memory checkpointer is development, single-process state. It is lost on resta
 cross-process consistency or thread eviction, and is not persistent memory, identity,
 authentication, authorization, or an execution token.
 
+V7.3B prepares an opt-in durable conversation mode with the official asynchronous LangGraph
+SQLite checkpointer (`langgraph-checkpoint-sqlite==3.1.1`, with indirect
+`aiosqlite==0.22.1`). A server-created conversation returns a high-entropy capability token once;
+only its SHA-256 digest is stored, and resume/history requests require both the generated
+`threadId` and `X-Conversation-Token`. The same checkpoint holds an eight-message model window and
+a bounded 100-message user-visible archive, so there is no second message database to drift.
+Legacy no-thread calls remain stateless and legacy caller-supplied `threadId` calls remain
+process-local unless a valid conversation token is supplied.
+
+**V7.3B persistent conversation and safe History API have completed real process-restart
+acceptance.** Process 2 recovered the lemon-tea context from the same SQLite file after Process 1
+was fully stopped; the follow-up price still came from the live menu path. The History API returned
+two safe user/assistant turns, while an obviously wrong test token returned
+`FRAMEWORK_CONVERSATION_ACCESS_DENIED`. SQLite provides restart persistence only when the same
+database file is on a persistent host filesystem. It does not provide distributed consistency,
+multi-instance safety, user identity, transaction authorization, or long-term user memory.
+
+The controlled real acceptance used this sequence:
+
+1. Process 1 created a durable conversation and answered `有柠檬茶吗？` with the live lemon-tea
+   facts: 12 yuan and currently available.
+2. Process 1 was fully stopped. Process 2 started with the same SQLite path.
+3. The same thread/token asked `多少钱？`; checkpoint context still identified lemon tea, while the
+   12-yuan availability fact was read again through the live menu path.
+4. History returned the two user/assistant turns using only `role` and `content` message fields.
+5. An obviously wrong test token was rejected with `FRAMEWORK_CONVERSATION_ACCESS_DENIED` and the
+   fixed message `无权访问该会话`.
+
 ## Local setup
 
 Python 3.11 is required. Keep the virtual environment inside this directory:
@@ -82,11 +110,17 @@ LLM_BASE_URL=
 FRAMEWORK_AGENT_LLM_MODEL=qwen3.8-flash
 FRAMEWORK_GATEWAY_URL=
 FRAMEWORK_GATEWAY_SECRET=
+FRAMEWORK_CHECKPOINT_DB_PATH=
 ```
 
 The app and `/health` import without these variables. They are checked only when the production
 runner is requested. Missing or invalid configuration returns `FRAMEWORK_CONFIG_MISSING` without
 identifying or printing a secret. V7.1A never sends a real Qwen request.
+
+An empty `FRAMEWORK_CHECKPOINT_DB_PATH` keeps the existing stateless and process-local modes and
+makes the new durable create/resume/history operations fail closed. For local validation, an
+ignored path such as `./data/framework-agent-checkpoints.sqlite3` can be used. A container must
+mount that path on a durable volume; the image's writable layer is not a persistence guarantee.
 
 ## Run
 
@@ -160,6 +194,27 @@ A client may optionally send and receive a safe conversation correlation identif
 The response never exposes stored messages, resolved queries, Tool messages, checkpoints, prompts,
 reasoning, provider metadata, or raw graph state.
 
+Durable mode has a separate narrow contract:
+
+```text
+POST /v1/conversations
+  -> { errCode, threadId, conversationToken }
+
+POST /v1/agent/run
+X-Conversation-Token: <capability>
+{ "query": "多少钱？", "threadId": "conv_..." }
+
+GET /v1/conversations/{threadId}/messages
+X-Conversation-Token: <capability>
+  -> { errCode, threadId, createdAt, updatedAt, messages: [{ role, content }] }
+```
+
+The token is returned only by conversation creation, has no expiry in V7.3B, and is not an account,
+login, cart/order authorization, or payment credential. The history endpoint projects only plain
+top-level user/assistant text. It never returns ToolMessages, `resolved_query`, route, checkpoint,
+pending state, prompt, reasoning, provider metadata, raw output, or secrets. There is deliberately
+no conversation list endpoint because the service has no authenticated user identity.
+
 The public endpoint does not return LangChain state, raw messages, prompts, tool call IDs, hidden
 reasoning, raw model output, traces, keys, base URLs, or stack traces.
 
@@ -167,6 +222,9 @@ reasoning, raw model output, traces, keys, base URLs, or stack traces.
 | --- | ---: | --- |
 | `FRAMEWORK_QUERY_INVALID` | 400 | Query contract failed |
 | `FRAMEWORK_THREAD_INVALID` | 400 | Optional thread correlation ID contract failed |
+| `FRAMEWORK_CONVERSATION_INVALID` | 400 | Durable conversation request shape failed |
+| `FRAMEWORK_CONVERSATION_ACCESS_DENIED` | 403 | Conversation capability was absent or invalid |
+| `FRAMEWORK_HISTORY_FAILED` | 503 | Durable storage/history operation was unavailable |
 | `FRAMEWORK_CONTEXT_FAILED` | 502 | Contextualization failed without exposing history or internals |
 | `FRAMEWORK_CONFIG_MISSING` | 503 | Required model or Gateway configuration is unavailable |
 | `FRAMEWORK_GATEWAY_REQUEST_FAILED` | 502 | Gateway transport or HTTP request failed |

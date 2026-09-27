@@ -23,7 +23,8 @@ LangChain `create_agent`、Structured Tools、Gateway 和真实菜单数据的�
 `agent_propose_action` 调用现有 Native Agent，并已完成真实 action proposal 与支付拒绝验收。
 当前五条闭合路由为 `menu_query`、`knowledge_query`、`action_query`、`smalltalk` 和
 `unsupported_action`。V7.3A 通过可选 `threadId`、进程内 `InMemorySaver` 和受限 Qwen
-Contextualizer 增加短期多轮语义上下文；服务仍不拥有数据库或交易职责。
+Contextualizer 增加短期多轮语义上下文；V7.3B 再以 `AsyncSqliteSaver`、单会话 capability token
+和安全 History API 实现同一持久文件系统上的进程重启恢复。该能力不改变交易职责边界。
 
 V7.1B-1 已把 Native Agent 的三个只读菜单能力抽取到 uniCloud Shared Menu Domain，并让
 Native Agent 与经过 HMAC-SHA256 认证的 URL 化 Framework Gateway 复用同一实现。Shared
@@ -56,7 +57,8 @@ graph TB
 
   subgraph FrameworkService[V7 Independent Python Framework Service]
     FASTAPI[Python 3.11 + FastAPI]
-    MEM[InMemorySaver<br/>Optional threadId]
+    MEM[InMemorySaver<br/>Legacy Ephemeral Thread]
+    DUR[AsyncSqliteSaver<br/>Durable Conversation]
     CTX[Qwen Contextualizer<br/>standalone query]
     LG[LangGraph StateGraph<br/>Five-route Routing]
     LC[LangChain create_agent]
@@ -66,6 +68,7 @@ graph TB
     SMALL[Smalltalk / Read-only Boundary]
     FASTAPI --> CTX --> LG
     MEM -. threaded checkpoint .-> LG
+    DUR -. token-protected checkpoint .-> LG
     LG --> LC --> GW
     LG --> RGW
     LG --> AGW
@@ -412,6 +415,34 @@ named `tool_choice` 且只接受单一 normalized Tool Call。修复后使用普
 严格校验 schema，并兼容 `normalized_tool_call`、`raw_openai_tool_call` 和
 `strict_json_content`。本次真实 Qwen 单独验收走 `normalized_tool_call`；其他两条是兼容保护。
 
+### 8.1 V7.3B Persistent Conversation
+
+```text
+POST /v1/conversations
+ → server-generated threadId + one-time conversationToken
+ → SHA-256 token digest registry
+
+threadId + X-Conversation-Token
+ → constant-time capability check
+ → AsyncSqliteSaver
+ → messages (最近 8 条模型上下文)
+ → archiveMessages (最近 100 条安全历史)
+ → 同一 checkpoint
+```
+
+`FRAMEWORK_CHECKPOINT_DB_PATH` 未配置时，原无状态请求与 V7.3A 自带 `threadId` 的进程内模式保持
+兼容；持久会话接口 fail closed。配置后，FastAPI lifespan 负责打开、初始化和关闭 SQLite 连接。
+History API 只投影 `user/assistant + content`，不暴露 ToolMessage、checkpoint、resolved query、
+route、pending state、reasoning、provider metadata 或 secret。消息只有 LangGraph checkpoint 一个
+事实源；独立 registry 只保存 threadId、token hash 与时间戳。
+
+conversationToken 是单会话 capability，不是用户身份或交易授权。当前没有 expiry、rotation、
+conversation list 或跨用户账户绑定；`pendingAction` 仍只是提案状态，“确认”仍不执行写操作。
+SQLite 只在同一持久文件系统上提供进程重启恢复，不承诺容器临时文件系统、跨机器、多实例或
+分布式并发一致性。真实验收已证明 Process 1 完全停止后，Process 2 能从同一 SQLite 文件恢复
+柠檬茶语义上下文；动态价格仍重新进入实时菜单路径。History API 返回两轮安全消息，错误 token
+统一返回 `FRAMEWORK_CONVERSATION_ACCESS_DENIED`。
+
 ## 9. Evaluation 与测试
 
 RAG 端到端评测使用21条知识与12条固定 Query：
@@ -425,8 +456,8 @@ RAG 端到端评测使用21条知识与12条固定 Query：
 - Evidence Hit Rate：5/6 supported，83.33%。
 - Server Grounding Pass：12/12，100%。
 
-这是项目级小样本评测，不是生产 Benchmark。V6 冻结时为747项自动化测试；V7.3A
-Finalization 时完整回归为832项 JavaScript 测试与182项 Python 测试，并另有微信开发者工具、
+这是项目级小样本评测，不是生产 Benchmark。V6 冻结时为747项自动化测试；V7.3B
+Finalization 时完整回归为832项 JavaScript 测试与197项 Python 测试，并另有微信开发者工具、
 真实 uniCloud 数据库、管理入口、URL 化 Gateway 与五条 LangGraph 路由验收记录。
 
 ## 10. 信任边界
@@ -443,14 +474,15 @@ Finalization 时完整回归为832项 JavaScript 测试与182项 Python 测试�
 
 ## 11. Current Scope / Future Work
 
-- RAG 接口仍为单轮；Python LangGraph 已有同进程、同 `threadId` 的短期 conversation context。
+- RAG 后端接口仍为单轮；Python LangGraph 可在顶层工作流中提供受限 conversation context。
 - RAG 不是 LangChain Agent Tool；LangGraph 只在独立 `knowledge_query` 分支调用它。
 - 21 chunks、12-query baseline，规模有限。
 - Pinia Cart、Pending Action 与未决提交恢复不跨小程序重启持久化。
 - 没有支付、库存事务、uni-id 或 exactly-once distributed transaction。
 - 没有生产规模 Vector DB、ANN、分布式检索和生产治理。
-- 已有进程内 `InMemorySaver`、可选 `threadId` 与受限历史；没有持久化 checkpointer、跨进程/
-  跨设备状态、conversation list/history API、多轮文本确认执行、长期记忆或 Python Framework 前端聊天 UI。
+- 已完成 `AsyncSqliteSaver`、capability token、安全 History API 和同一持久文件系统真实重启验收。
+  没有跨机器/多实例保证、conversation list、账户级跨设备身份、token expiry/rotation/revocation、
+  多轮文本确认执行、长期记忆或 Python Framework 前端聊天 UI。
 
 下一步应先扩充评测与失败样本，再基于冻结 baseline 比较检索、Evidence Selection 和持久化恢复方案，而不是直接扩大 Agent 权限。
 

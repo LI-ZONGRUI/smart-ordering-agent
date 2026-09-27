@@ -124,6 +124,7 @@ def normalize_result(state: FrameworkGraphState) -> dict[str, object]:
         "answer": normalized_answer,
         "completed": completed,
         "messages": [AIMessage(content=normalized_answer)],
+        "archiveMessages": [AIMessage(content=normalized_answer)],
     }
     pending_action = state.get("pendingAction")
     if pending_action is not None:

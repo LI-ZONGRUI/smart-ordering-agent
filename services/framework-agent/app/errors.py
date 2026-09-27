@@ -25,6 +25,19 @@ def thread_invalid() -> FrameworkError:
     )
 
 
+def conversation_invalid() -> FrameworkError:
+    return FrameworkError("FRAMEWORK_CONVERSATION_INVALID", "会话访问参数无效", 400)
+
+
+def conversation_access_denied() -> FrameworkError:
+    # 未知会话与错误 token 使用同一响应，避免泄露 threadId 是否存在。
+    return FrameworkError("FRAMEWORK_CONVERSATION_ACCESS_DENIED", "无权访问该会话", 403)
+
+
+def history_failed() -> FrameworkError:
+    return FrameworkError("FRAMEWORK_HISTORY_FAILED", "会话历史暂时无法读取", 503)
+
+
 def context_failed() -> FrameworkError:
     return FrameworkError("FRAMEWORK_CONTEXT_FAILED", "对话上下文处理未完成", 502)
 
