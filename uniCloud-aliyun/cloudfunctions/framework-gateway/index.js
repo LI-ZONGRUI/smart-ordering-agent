@@ -6,7 +6,12 @@ async function ragAnswer(query) {
   return uniCloud.importObject('rag').answer(query)
 }
 
-const handle = createFrameworkGateway({ domain: menuDomain, ragAnswer })
+async function agentProposeAction(query) {
+  // 只调用正式Native Agent入口；Gateway不会暴露管理trace或任何确认后执行能力。
+  return uniCloud.importObject('agent').run(query)
+}
+
+const handle = createFrameworkGateway({ domain: menuDomain, ragAnswer, agentProposeAction })
 
 exports.main = async (event, context) => {
   // 只允许URL化HTTP入口；callFunction或客户端不能绕过HMAC边界。

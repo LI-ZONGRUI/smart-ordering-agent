@@ -19,6 +19,7 @@ POST /v1/agent/run
  → route_request
     ├─ menu_query → existing LangChain create_agent → read-only Structured Tools
     ├─ knowledge_query → rag_node → authenticated Gateway → existing uniCloud RAG
+    ├─ action_query → native_action_node → authenticated Gateway → existing Native Agent proposal
     ├─ smalltalk → deterministic response
     └─ unsupported_action → deterministic read-only boundary
  → normalize_result
@@ -37,6 +38,13 @@ V7.2B adds the fourth `knowledge_query` route and `rag_node`. The node uses the 
 Gateway adapter to call the existing uniCloud RAG and receives only its safe server-rendered
 answer. Python does not copy knowledge, embeddings, retrieval, grounding, or rendering logic.
 **V7.2B has completed controlled real acceptance through the formal FastAPI endpoint.**
+
+V7.2C adds a narrowly classified `action_query` route. It calls the existing Native Agent through
+the same HMAC-authenticated Gateway and accepts only its validated add-to-cart `pendingAction`.
+The graph does not execute that proposal. User confirmation, frontend cart mutation, order
+preview, confirmed order creation, price revalidation, request fingerprinting and idempotency all
+remain in their existing deterministic boundaries. **V7.2C is fully offline-tested and has
+completed real action-proposal and payment-boundary acceptance.**
 
 ## Local setup
 
@@ -108,6 +116,25 @@ Successful response:
 }
 ```
 
+An action proposal may add one backward-compatible optional field:
+
+```json
+{
+  "pendingAction": {
+    "type": "add_to_cart",
+    "dishId": "dish-4",
+    "name": "柠檬茶",
+    "quantity": 2,
+    "unitPrice": 12,
+    "totalPrice": 24,
+    "requiresConfirmation": true
+  }
+}
+```
+
+This is a proposal for explicit user confirmation. It is not proof that the cart changed and it
+cannot represent order creation or payment.
+
 The public endpoint does not return LangChain state, raw messages, prompts, tool call IDs, hidden
 reasoning, raw model output, traces, keys, base URLs, or stack traces.
 
@@ -168,15 +195,22 @@ The project-owned workflow is defined under `app/graph/`:
 START
  → route_request
  → menu_query → menu_agent ───────────────┐
- → smalltalk → smalltalk_response ────────┼→ normalize_result → END
+ → knowledge_query → rag_node ────────────┤
+ → action_query → native_action_node ─────┤
+ → smalltalk → smalltalk_response ────────┤→ normalize_result → END
  → unsupported_action → readonly_boundary ┘
 ```
 
-`FrameworkGraphState` contains only `query`, `route`, `answer` and `completed`. It does not store
-keys, Gateway secrets, prompts, model reasoning, raw model responses or Tool messages. The first
-router is intentionally deterministic and small: exact greetings use the smalltalk branch,
-write-oriented cart/order/payment requests use the read-only boundary, and remaining requests use
-the existing menu Agent. This is an orchestration foundation, not a complete NLU classifier.
+`FrameworkGraphState` contains `query`, `route`, `answer`, `completed` and an optional strict
+`pendingAction`. It does not store keys, Gateway secrets, prompts, model reasoning, raw model
+responses or Tool messages. The deterministic router sends a small set of add-to-cart proposal
+phrases to `action_query`; order, payment, refund, confirmation and destructive cart requests stay
+in `unsupported_action`. This is an orchestration foundation, not a complete NLU classifier.
+
+For a validated add-to-cart proposal, `native_action_node` does not expose the Native Agent's free
+answer. It deterministically renders the dish name, quantity, unit price and total from
+`pendingAction`, then asks the user to confirm in the ordering UI. This avoids promising a text
+“确认” continuation when the service has no `thread_id`, memory or multi-turn execution.
 
 There is no checkpointer, `thread_id`, conversation memory or multi-turn history. The public
 FastAPI contract does not expose the selected route or graph state. Inspect the compiled graph
@@ -282,8 +316,8 @@ proof that the restaurant has no such item.
 Internal IDs and codes may remain in the local sanitized acceptance trace, but the user-facing
 answer must hide dish IDs, Tool names, field names, Gateway/HMAC details and internal status codes;
 `on_sale` and `sold_out` are rendered as “在售” and “已售罄”. The formal `/v1/agent/run` response
-remains only `errCode`, `query`, `answer` and `completed`, with no trace, messages, Tool calls,
-prompt, reasoning or raw provider response.
+remains narrow and may include only the optional validated `pendingAction` for action proposals,
+with no trace, messages, Tool calls, prompt, reasoning or raw provider response.
 
 ## V7.2B real RAG route acceptance
 
@@ -295,8 +329,9 @@ The same formal endpoint was manually verified with all four closed routes:
   Framework Gateway → rag_answer → existing uniCloud RAG`. The grounded answer stated the lemon
   aroma and the recorded red-tea/lemon ingredients.
 - `你好` followed `smalltalk → smalltalk_response` without entering either remote branch.
-- `把柠檬茶加入购物车` followed `unsupported_action → readonly_boundary`, performed no write,
-  and did not delegate to the Native Agent.
+- Before V7.2C, `把柠檬茶加入购物车` followed `unsupported_action → readonly_boundary`, performed
+  no write, and did not delegate to the Native Agent. V7.2C intentionally supersedes only this
+  add-to-cart proposal classification while preserving the no-write boundary.
 
 Every branch then passed through `normalize_result → END`. The public response remained only
 `errCode`, `query`, `answer`, and `completed`; route, graph state, chunks, scores, evidence IDs,
@@ -305,6 +340,26 @@ trace, Tool calls, and reasoning were not exposed.
 LangGraph does not reimplement RAG. Embedding, Exact Retrieval, Top-3, evidence-first grounding,
 and deterministic server rendering remain in the existing uniCloud RAG. The Python service has no
 knowledge-source copy, vectors, cosine implementation, RAG prompt, or second generation pipeline.
+
+## V7.2C real action-proposal acceptance
+
+The fifth closed route was then verified through the same formal endpoint:
+
+- `把柠檬茶加两杯到购物车` followed `action_query → native_action_node → ActionGateway →
+  authenticated Framework Gateway → agent_propose_action → existing Native Agent →
+  prepare_add_to_cart` and returned the validated seven-field proposal for 柠檬茶 ×2, unit price
+  12, total 24, and `requiresConfirmation=true`.
+- `native_action_node` rendered the final user answer deterministically from those fields and asks
+  for confirmation in the ordering UI. It does not promise a later text-confirmation execution.
+- `直接帮我付款` remained an `unsupported_action`, returned no `pendingAction`, and did not enter
+  Native Agent proposal execution.
+- Existing real `menu_query`, `knowledge_query`, and `smalltalk` cases continued to work.
+
+The Native Agent Registry still contains three read-only menu Tools plus proposal-only
+`prepare_add_to_cart`. It contains no `createConfirmedOrder`, payment, or confirmed transaction
+execution Tool. Automated no-side-effect coverage runs the real Native Runner with database
+`add`, `update`, and `remove` methods configured to fail immediately; the proposal path performs
+only dishes reads and produces no cart mutation, order insert, confirmed execution, or executed flag.
 
 ## Real Gateway acceptance
 
@@ -336,8 +391,8 @@ container deployment is claimed.
 
 - **V7.1A complete locally:** Python service, adapter, gateway port, read-only tools, real
   LangChain loop with an offline model, HTTP and safety tests.
-- **Not complete:** Python service remote deployment, frontend integration, RAG/Native Agent
-  routing, multi-turn memory and checkpointer.
+- **Not complete:** Python service remote deployment, frontend framework integration, multi-turn
+  memory, `thread_id`, checkpointer, conversation history, multi-turn confirmation and long-term state.
 - **V7.1B-1 accepted on real uniCloud:** shared domain and authenticated server-side Gateway. The
   Python service did not participate in that acceptance.
 - **V7.1B-2 accepted against real uniCloud:** Python `UniCloudHttpMenuGateway`, HMAC v1 client,
@@ -348,3 +403,9 @@ container deployment is claimed.
 - **V7.2A accepted through the local formal FastAPI endpoint:** explicit project-owned
   `StateGraph`, minimal typed state, conditional routing, normalized output, offline tests and the
   three controlled route cases described above.
+- **V7.2B accepted through the same endpoint:** the knowledge route reuses the existing
+  evidence-first RAG through the authenticated Gateway without copying retrieval or grounding
+  into Python.
+- **V7.2C accepted:** the proposal-only action route returned a real validated 柠檬茶 ×2 action,
+  while a direct payment request remained unsupported with no `pendingAction`. The final action
+  answer is deterministically rendered from the proposal and no side effect is executed.

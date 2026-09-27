@@ -16,6 +16,12 @@ smalltalk、真实 Qwen 菜单查询和只读拒绝三条路由验收。V7.2B �
 RAG，并已完成菜单查询、知识问答、闲聊和写操作拒绝四条正式 API 路径的真实验收。详见
 [Framework Agent Service](services/framework-agent/README.md)。
 
+V7.2C 已加入第五条 `action_query` 路由：`native_action_node` 经同一 HMAC Gateway 调用现有
+Native Agent，只接收其服务端校验后的加购 `pendingAction`。真实验收中，“把柠檬茶加两杯到
+购物车”返回柠檬茶 ×2、单价 12 元、合计 24 元且 `requiresConfirmation=true`；Python 节点
+随后只根据该结构确定性生成用户提示。LangGraph 不执行购物车或订单写操作。“直接帮我付款”
+仍进入 `unsupported_action` 且不返回 `pendingAction`。
+
 V7.1B-1 已在 uniCloud 侧把三个只读菜单能力抽取为同一 Shared Domain，并新增 HMAC-SHA256
 认证的只读 Framework Gateway。该 Gateway 已通过真实 uniCloud URL 化、HMAC 和线上菜单数据
 验收，Native Agent 也完成抽取后的真实回归。V7.1B-2 已在 Python 侧实现 HMAC v1 HTTP
@@ -305,12 +311,13 @@ pnpm run rag:check-source
 git diff --check
 ```
 
-当前回归：**818 项 JavaScript 测试与 137 项 Python 测试通过**。测试覆盖 RAG 索引/检索/生成/评测、Agent Tool 与多步循环、四路显式 LangGraph 路由、动作确认、订单预览/创建、幂等并发语义、前端状态以及冻结文件未漂移。
+当前回归：**832 项 JavaScript 测试与 152 项 Python 测试通过**。测试覆盖 RAG 索引/检索/生成/评测、Agent Tool 与多步循环、五路显式 LangGraph 路由、动作提案、订单预览/创建、幂等并发语义、前端状态以及冻结文件未漂移。
 
 ## Known Limitations / Future Work
 
 - Knowledge Base 只有21条人工审核 chunks；12-query baseline 是项目级小样本评测。
 - RAG 是单轮问答；Agent 没有多轮 conversation memory。
+- LangGraph 尚无 checkpointer、`thread_id`、conversation history、多轮确认或长期记忆；Python 服务也没有 ChatGPT 风格前端。
 - RAG 没有注册成 Agent Tool，两项能力保持独立。
 - 购物车仍在客户端 Pinia；Pending Action 不持久化。
 - 未决 requestId 与 frozen payload 不跨页面刷新或小程序重启恢复。
@@ -338,7 +345,14 @@ Local Ordering
  → Persisted Confirmed Order
  → Server Idempotency
  → Frontend Same-key Retry Integration
+ → V7.2A Explicit StateGraph
+ → V7.2B RAG Route Integration
+ → V7.2C Native Agent Action Proposal Route
 ```
+
+V7.2A、V7.2B、V7.2C 均已完成实现与对应真实验收。当前 LangGraph 编排 Menu、RAG、
+Action Proposal、Smalltalk 与 Safety Boundary；它仍是单轮工作流，没有 checkpointer、
+`thread_id`、conversation history、多轮确认或长期记忆。
 
 完整冻结状态与真实 commit 里程碑见 [Final Summary](docs/FINAL_SUMMARY.md)。
 

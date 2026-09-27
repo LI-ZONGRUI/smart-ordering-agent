@@ -6,10 +6,12 @@ from langgraph.graph import END, START, StateGraph
 from langgraph.graph.state import CompiledStateGraph
 
 from app.agent import AgentResult
+from app.gateways.action import ActionProposalGateway
 from app.gateways.rag import RagGateway
 from app.graph.nodes import (
     MenuAgentRunner,
     build_menu_agent_node,
+    build_native_action_node,
     build_rag_node,
     normalize_result,
     readonly_boundary,
@@ -19,13 +21,18 @@ from app.graph.router import route_request, select_route
 from app.graph.state import FrameworkGraphState
 
 
-def build_framework_graph(agent: MenuAgentRunner, rag_gateway: RagGateway) -> CompiledStateGraph:
+def build_framework_graph(
+    agent: MenuAgentRunner,
+    rag_gateway: RagGateway,
+    action_gateway: ActionProposalGateway,
+) -> CompiledStateGraph:
     """Compile the project-owned conditional graph around the existing LangChain Agent."""
 
     builder = StateGraph(FrameworkGraphState)
     builder.add_node("route_request", route_request)
     builder.add_node("menu_agent", build_menu_agent_node(agent))
     builder.add_node("rag_node", build_rag_node(rag_gateway))
+    builder.add_node("native_action_node", build_native_action_node(action_gateway))
     builder.add_node("smalltalk_response", smalltalk_response)
     builder.add_node("readonly_boundary", readonly_boundary)
     builder.add_node("normalize_result", normalize_result)
@@ -37,11 +44,18 @@ def build_framework_graph(agent: MenuAgentRunner, rag_gateway: RagGateway) -> Co
         {
             "menu_query": "menu_agent",
             "knowledge_query": "rag_node",
+            "action_query": "native_action_node",
             "smalltalk": "smalltalk_response",
             "unsupported_action": "readonly_boundary",
         },
     )
-    for branch in ("menu_agent", "rag_node", "smalltalk_response", "readonly_boundary"):
+    for branch in (
+        "menu_agent",
+        "rag_node",
+        "native_action_node",
+        "smalltalk_response",
+        "readonly_boundary",
+    ):
         builder.add_edge(branch, "normalize_result")
     builder.add_edge("normalize_result", END)
     return builder.compile()
@@ -57,8 +71,13 @@ class FrameworkWorkflow:
             query=query,
             answer=state["answer"],
             completed=state["completed"],
+            pending_action=state.get("pendingAction"),
         )
 
 
-def build_framework_workflow(agent: MenuAgentRunner, rag_gateway: RagGateway) -> FrameworkWorkflow:
-    return FrameworkWorkflow(graph=build_framework_graph(agent, rag_gateway))
+def build_framework_workflow(
+    agent: MenuAgentRunner,
+    rag_gateway: RagGateway,
+    action_gateway: ActionProposalGateway,
+) -> FrameworkWorkflow:
+    return FrameworkWorkflow(graph=build_framework_graph(agent, rag_gateway, action_gateway))

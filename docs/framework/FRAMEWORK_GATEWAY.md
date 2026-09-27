@@ -43,7 +43,7 @@ The Gateway is a normal uniCloud cloud function intended to be URLized at one ex
 - limits the decoded body to 4096 bytes;
 - authenticates the exact raw body bytes before JSON parsing;
 - validates a strict top-level and per-operation schema;
-- dispatches through a static four-operation map;
+- dispatches through a static five-operation map;
 - returns small normalized data from the shared domain;
 - converts database and implementation failures to fixed safe errors.
 
@@ -101,6 +101,25 @@ records. The category ID is not hardcoded.
 existing evidence-first `rag.answer(query)` implementation. The Gateway returns only `query`,
 `answerable`, and the server-rendered `answer`; it omits evidence IDs, chunks, similarity scores,
 embeddings, prompts, raw model output, and reasoning.
+
+### `agent_propose_action`
+
+```json
+{
+  "operation": "agent_propose_action",
+  "arguments": { "query": "把柠檬茶加两杯到购物车" }
+}
+```
+
+`query` is trimmed and must contain 1–200 Unicode characters. This operation statically calls the
+existing formal `agent.run(query)` entry. It never calls `runForAdmin`, a diagnostic Tool entry,
+frontend cart code, order creation, or payment. The Gateway projects only `query`, `answer`,
+`completed`, and either `null` or the existing exact seven-field add-to-cart `pendingAction`.
+Trace, messages, prompts, raw model output and execution internals are discarded.
+
+The proposal always carries `requiresConfirmation: true`. Returning it does not modify a cart or
+authorize any transaction. `prepare_add_to_cart`, `createOrder`, `createConfirmedOrder`, payment,
+refund and confirmation operations remain outside the Gateway allowlist.
 
 All other operation names, including prototype-property names and write operations, are rejected.
 Extra top-level and argument fields are rejected.
@@ -195,7 +214,7 @@ path was added for nonce storage. Persistent replay prevention is future hardeni
 | Error | Meaning |
 | --- | --- |
 | `FRAMEWORK_GATEWAY_REQUEST_INVALID` | HTTP, payload, JSON, size, or argument contract failed |
-| `FRAMEWORK_GATEWAY_OPERATION_NOT_ALLOWED` | Operation is outside the four-item read-only allowlist |
+| `FRAMEWORK_GATEWAY_OPERATION_NOT_ALLOWED` | Operation is outside the five-item side-effect-free allowlist |
 | `FRAMEWORK_GATEWAY_AUTH_MISSING` | Required authentication metadata is absent |
 | `FRAMEWORK_GATEWAY_AUTH_INVALID` | Signature or authentication metadata is malformed/invalid |
 | `FRAMEWORK_GATEWAY_AUTH_EXPIRED` | Timestamp is outside ±300 seconds |
@@ -213,6 +232,18 @@ aroma and recorded red-tea/lemon ingredient facts. The Gateway response remained
 `query`, `answerable`, and `answer`.
 
 Automated tests remain fully offline. The HMAC-SHA256 v1 canonical protocol was not changed.
+
+## V7.2C Status
+
+The proposal-only `agent_propose_action` operation, strict result projection and Python action
+adapter are implemented, offline-tested, and accepted through the real uniCloud and Native Agent
+path. The HMAC v1 canonical string is unchanged. No cart, order or payment write operation was added.
+
+The accepted action request “把柠檬茶加两杯到购物车” produced the existing validated seven-field
+proposal for `dish-4`: quantity 2, unit price 12, total 24, and `requiresConfirmation=true`.
+`native_action_node` rendered the user-facing answer deterministically from that proposal instead
+of trusting the Native Agent's free text. The accepted payment request “直接帮我付款” stayed in
+`unsupported_action` and returned no proposal.
 
 ## Real uniCloud Acceptance
 
@@ -302,11 +333,24 @@ Implemented, locally tested, and accepted on real uniCloud:
 - real Python `UniCloudHttpMenuGateway` reads through the deployed Gateway;
 - authenticated rejection of a non-allowlisted write operation.
 
-Not yet implemented or accepted:
+Implemented, locally tested, and accepted through the real action-proposal path:
 
-- real Qwen + Gateway end-to-end LangChain run;
+- HMAC-authenticated `agent_propose_action` delegation to formal `agent.run(query)`;
+- strict projection of the existing add-to-cart `pendingAction`;
+- LangGraph `action_query → native_action_node` orchestration without execution.
+
+Not yet implemented:
+
 - persistent nonce replay cache;
-- custom LangGraph workflow.
+- checkpointer, thread ID, conversation memory, multi-turn confirmation, frontend framework chat
+  integration and long-term graph state.
+
+The Gateway operation is deliberately narrow: it statically calls `uniCloud.importObject('agent').run(query)`
+and projects only `query`, `answer`, `completed`, and `pendingAction`. It does not expose direct
+`prepare_add_to_cart`, `createOrder`, `createConfirmedOrder`, payment, refund, or confirmed execution.
+Offline integration tests run the real Native Runner against a database fixture whose `add`,
+`update`, and `remove` methods fail immediately; only dishes reads occur, with no cart mutation,
+order insert, confirmed execution, or executed flag.
 
 ## Python Client Status
 

@@ -80,19 +80,21 @@ pytest behavior.
 ## LangGraph boundary
 
 V7.1 used LangGraph only through LangChain's agent runtime. V7.2A now declares LangGraph 1.2.12 as
-a direct dependency and defines a project-owned `StateGraph` under `app/graph/`. Its minimal typed
-state contains `query`, `route`, `answer` and `completed`. V7.2B adds the closed
+a direct dependency and defines a project-owned `StateGraph` under `app/graph/`. Its typed state
+contains `query`, `route`, `answer`, `completed` and an optional strict `pendingAction`. V7.2B adds the closed
 `knowledge_query` route, which delegates through `rag_node` and the authenticated Gateway to the
 existing uniCloud RAG. Conditional edges route requests to the existing menu Agent, the RAG,
-deterministic smalltalk, or a deterministic read-only boundary. Every branch passes through
+the existing Native Agent proposal path, deterministic smalltalk, or a deterministic read-only
+boundary. Every branch passes through
 `normalize_result` before `END`.
 
 The menu node delegates to the accepted `FrameworkAgent`; it does not call the Gateway directly
 or replace the inner LangChain Tool loop. The RAG node accepts only the graph query and returns the
 existing server-rendered answer; it does not implement Embedding, Retrieval, Grounding, or
-evidence rendering in Python. There is no checkpointer, thread ID, conversation memory,
-multi-turn history, or Native Agent delegation. The formal HTTP response still omits route, graph
-state, trace, messages, evidence IDs, chunks, scores, and embeddings.
+evidence rendering in Python. There is no checkpointer, thread ID, conversation memory or
+multi-turn history. The formal HTTP response still omits route, graph state, trace, messages,
+evidence IDs, chunks, scores, and embeddings. It may include a validated optional `pendingAction`;
+this never means the proposal has executed.
 
 **V7.2A is complete and has passed controlled local acceptance through the formal FastAPI
 endpoint, including smalltalk, the real Qwen menu path and the deterministic read-only boundary.**
@@ -106,6 +108,35 @@ The router remains intentionally small and deterministic. Write-action and exact
 run first; a compact set of taste, ingredient, description, and texture markers selects
 `knowledge_query`; other read-only questions default to `menu_query`. Ambiguous phrasing can be
 misclassified, and V7.2B does not add a router model or a large item-specific keyword table.
+
+## V7.2C proposal boundary
+
+The action branch supports only add-to-cart proposal intent. Python does not copy the Native
+Function Calling loop or tools. `UniCloudHttpMenuGateway.propose_action()` signs the narrow
+`agent_propose_action` operation; the server adapter statically calls `agent.run(query)` and
+projects only `query`, `answer`, `completed`, and the existing seven-field `pendingAction`.
+
+The Native Agent may read menu facts and call its existing `prepare_add_to_cart` Tool. That Tool
+revalidates current dish identity, state, quantity, and price, then returns a proposal requiring
+confirmation. It does not write a cart. LangGraph never calls frontend Pinia, `previewOrder`,
+`createConfirmedOrder`, an orders collection, or a payment operation. Those transaction controls,
+server revalidation, request fingerprint, idempotency, unique constraint and explicit user
+confirmation remain outside the model workflow.
+
+V7.2C is implemented, offline-tested, and accepted through the real FastAPI → LangGraph → HMAC
+Gateway → Native Agent path. “把柠檬茶加两杯到购物车” returned a validated proposal for 柠檬茶 ×2,
+unit price 12, total 24, and `requiresConfirmation=true`. “直接帮我付款” remained an
+`unsupported_action` and returned no proposal.
+
+The proposal answer is rendered deterministically by `native_action_node` from the validated
+`pendingAction`. This replaced Native Agent free text that could imply “reply confirm and I will
+execute”, although no `thread_id`, conversation memory, multi-turn confirmation, or text-confirmed
+execution exists. The resulting user flow is proposal-only:
+
+```text
+User intent → Native Agent → pendingAction → frontend UI
+            → explicit user confirmation → deterministic execution
+```
 
 ## Failure and execution controls
 
@@ -154,3 +185,13 @@ recursion limit bounds the agent cycle and FastAPI applies an overall 20-second 
 - Keep the formal API shape unchanged and continue rejecting write actions.
 - Real `menu_query`, `knowledge_query`, `smalltalk`, and `unsupported_action` paths are accepted
   through the unchanged formal API.
+
+### V7.2C
+
+- Add deterministic `action_query` routing for add-to-cart proposal phrases only.
+- Delegate through `native_action_node` and the HMAC Gateway to the existing Native Agent.
+- Return the existing strict `pendingAction` as an optional backward-compatible API field.
+- Keep order, payment, refund, confirmed execution and destructive cart requests unsupported.
+- Keep every side effect behind explicit user confirmation and deterministic transaction code.
+- Real action-proposal and payment-boundary acceptance is complete. The action answer is rendered
+  deterministically from validated proposal fields; no graph node executes it.

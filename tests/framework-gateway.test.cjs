@@ -4,6 +4,7 @@ const crypto = require('node:crypto')
 const fs = require('node:fs')
 const shared = require('../uniCloud-aliyun/cloudfunctions/common/menu-read-domain')
 const { createMenuDb } = require('./helpers/menu-db.cjs')
+const { runAgent } = require('../uniCloud-aliyun/cloudfunctions/agent/runner')
 const {
   createFrameworkGateway,
   createCanonicalSigningString,
@@ -61,9 +62,22 @@ function setup(options = {}) {
     usedKnowledgeIds: ['dish-4-taste'],
     evidence: [{ knowledgeId: 'dish-4-taste', similarity: 0.9 }]
   }))
+  const agentProposeAction = options.agentProposeAction || (async query => ({
+    errCode: 0,
+    query,
+    answer: '已准备两杯柠檬茶，请确认后再加入购物车。',
+    completed: true,
+    pendingAction: {
+      type: 'add_to_cart', dishId: 'dish-4', name: '柠檬茶', quantity: 2,
+      unitPrice: 12, totalPrice: 24, requiresConfirmation: true
+    },
+    trace: [{ type: 'private' }],
+    messages: [{ role: 'system', content: 'private' }]
+  }))
   const handle = createFrameworkGateway({
     domain,
     ragAnswer,
+    agentProposeAction,
     getSecret: options.getSecret || (() => TEST_SECRET),
     now: options.now || (() => NOW),
     cryptoModule: options.cryptoModule || crypto
@@ -192,7 +206,8 @@ test('认证错误不返回secret、signature或内部信息', async () => {
   assert.deepEqual(Object.keys(result).sort(), ['errCode', 'message'])
 })
 
-for (const operation of ['prepare_add_to_cart', 'createOrder', 'createConfirmedOrder', 'unknown',
+for (const operation of ['prepare_add_to_cart', 'createOrder', 'createConfirmedOrder', 'payment',
+  'confirm_payment', 'unknown',
   '__proto__', 'constructor', 'toString']) {
   test(`operation allowlist拒绝 ${operation}`, async () => {
     const result = await setup().handle(eventFor({ operation, arguments: {} }))
@@ -265,6 +280,131 @@ test('rag_answer异常或不安全格式统一为安全Tool错误', async () => 
   }
 })
 
+test('agent_propose_action要求HMAC并只投影严格的现有pendingAction合同', async () => {
+  const result = await setup().handle(eventFor({
+    operation: 'agent_propose_action', arguments: { query: ' 把柠檬茶加两杯到购物车 ' }
+  }))
+  assert.deepEqual(result, {
+    errCode: 0,
+    operation: 'agent_propose_action',
+    data: {
+      query: '把柠檬茶加两杯到购物车',
+      answer: '已准备两杯柠檬茶，请确认后再加入购物车。',
+      completed: true,
+      pendingAction: {
+        type: 'add_to_cart', dishId: 'dish-4', name: '柠檬茶', quantity: 2,
+        unitPrice: 12, totalPrice: 24, requiresConfirmation: true
+      }
+    }
+  })
+  const text = JSON.stringify(result)
+  for (const forbidden of ['trace', 'messages', 'system', 'reasoning', 'tool_call_id']) {
+    assert.ok(!text.includes(forbidden), forbidden)
+  }
+})
+
+test('agent_propose_action缺少或错误HMAC时拒绝', async () => {
+  const event = eventFor({ operation: 'agent_propose_action', arguments: { query: '加购' } })
+  delete event.headers['x-framework-signature']
+  assert.equal((await setup().handle(event)).errCode, 'FRAMEWORK_GATEWAY_AUTH_MISSING')
+  const bad = eventFor({ operation: 'agent_propose_action', arguments: { query: '加购' } }, {
+    signature: '0'.repeat(64)
+  })
+  assert.equal((await setup().handle(bad)).errCode, 'FRAMEWORK_GATEWAY_AUTH_INVALID')
+})
+
+for (const args of [{}, { query: '' }, { query: ' ' }, { query: 1 },
+  { query: '中'.repeat(201) }, { query: '加购', execute: true }]) {
+  test(`agent_propose_action参数拒绝 ${JSON.stringify(args).slice(0, 30)}`, async () => {
+    const result = await setup().handle(eventFor({ operation: 'agent_propose_action', arguments: args }))
+    assert.equal(result.errCode, 'FRAMEWORK_GATEWAY_REQUEST_INVALID')
+  })
+}
+
+test('agent_propose_action拒绝不完整、扩展或价格不一致的proposal', async () => {
+  const base = {
+    type: 'add_to_cart', dishId: 'dish-4', name: '柠檬茶', quantity: 2,
+    unitPrice: 12, totalPrice: 24, requiresConfirmation: true
+  }
+  for (const pendingAction of [
+    { ...base, totalPrice: 25 },
+    { ...base, requiresConfirmation: false },
+    { ...base, execute: true },
+    { ...base, quantity: 0 }
+  ]) {
+    const agentProposeAction = async query => ({
+      errCode: 0, query, answer: '待确认', completed: true, pendingAction
+    })
+    const result = await setup({ agentProposeAction }).handle(eventFor({
+      operation: 'agent_propose_action', arguments: { query: '加购' }
+    }))
+    assert.equal(result.errCode, 'FRAMEWORK_GATEWAY_TOOL_FAILED')
+  }
+})
+
+test('agent_propose_action只返回提案且不调用菜单Domain或任何写接口', async () => {
+  const calls = []
+  const domain = new Proxy({}, {
+    get() { throw new Error('proposal path must not access domain or write state') }
+  })
+  const agentProposeAction = async query => {
+    calls.push(query)
+    return {
+      errCode: 0, query, answer: '请确认', completed: true,
+      pendingAction: {
+        type: 'add_to_cart', dishId: 'dish-4', name: '柠檬茶', quantity: 1,
+        unitPrice: 12, totalPrice: 12, requiresConfirmation: true
+      }
+    }
+  }
+  const result = await setup({ domain, agentProposeAction }).handle(eventFor({
+    operation: 'agent_propose_action', arguments: { query: '加入购物车' }
+  }))
+  assert.equal(result.errCode, 0)
+  assert.deepEqual(calls, ['加入购物车'])
+  assert.equal(result.data.pendingAction.requiresConfirmation, true)
+  assert.ok(!Object.hasOwn(result.data, 'executed'))
+})
+
+test('agent_propose_action经真实Native Runner只读取菜单并生成提案', async () => {
+  const fixture = createMenuDb()
+  const decisions = [
+    {
+      type: 'tool_calls',
+      message: { role: 'assistant', content: null, tool_calls: [{ id: 'search', type: 'function',
+        function: { name: 'search_menu', arguments: '{"query":"柠檬茶"}' } }] }
+    },
+    {
+      type: 'tool_calls',
+      message: { role: 'assistant', content: null, tool_calls: [{ id: 'prepare', type: 'function',
+        function: { name: 'prepare_add_to_cart', arguments: '{"dishId":"dish-4","quantity":2}' } }] }
+    },
+    { type: 'final', content: '已准备两杯柠檬茶，请确认后再加入购物车。' }
+  ]
+  let cursor = 0
+  const agentProposeAction = query => runAgent(query, {
+    db: fixture.db,
+    httpclient: {},
+    env: {
+      DASHSCOPE_API_KEY: 'offline-test-placeholder',
+      LLM_BASE_URL: 'https://example.invalid/compatible-mode/v1',
+      AGENT_LLM_MODEL: 'offline-model'
+    },
+    modelClient: async () => decisions[cursor++]
+  })
+  const result = await setup({ agentProposeAction }).handle(eventFor({
+    operation: 'agent_propose_action', arguments: { query: '把柠檬茶加两杯到购物车' }
+  }))
+
+  assert.equal(result.errCode, 0)
+  assert.equal(result.data.pendingAction.totalPrice, 24)
+  assert.equal(result.data.pendingAction.requiresConfirmation, true)
+  assert.ok(fixture.calls.length >= 2)
+  assert.ok(fixture.calls.every(call => call.name === 'dishes'))
+  assert.deepEqual(fixture.dishes, require('../uniCloud-aliyun/database/dishes.init_data.json'))
+  assert.equal(Object.hasOwn(result.data, 'executed'), false)
+})
+
 for (const args of [{ query: '' }, { query: ' ' }, { query: '中'.repeat(201) }, { query: 1 },
   {}, { query: '可乐', filters: {} }]) {
   test(`search_menu参数拒绝 ${JSON.stringify(args).slice(0, 30)}`, async () => {
@@ -316,10 +456,13 @@ test('Gateway源码没有DB查询、动态执行、写操作或管理接口复�
   const files = ['index.js', 'gateway.js', 'menu-domain.js']
   const text = files.map(file => fs.readFileSync(`uniCloud-aliyun/cloudfunctions/framework-gateway/${file}`, 'utf8')).join('\n')
   for (const pattern of [/uniCloud\.database/,/collection\(/,/sharedDomain\[operation\]/,
-    /\badd\s*\(\s*\{/,/\bupdate\s*\(\s*\{/,/\bremove\s*\(/,/importObject\((?!'rag')/,/agent-admin/,/agent-tool-admin/]) {
+    /\badd\s*\(\s*\{/,/\bupdate\s*\(\s*\{/,/\bremove\s*\(/,
+    /importObject\((?!'rag'|'agent')/,/agent-admin/,/agent-tool-admin/,/runForAdmin/,
+    /createConfirmedOrder/]) {
     assert.ok(!pattern.test(text), String(pattern))
   }
   assert.match(text, /uniCloud\.importObject\('rag'\)\.answer\(query\)/)
+  assert.match(text, /uniCloud\.importObject\('agent'\)\.run\(query\)/)
 })
 
 test('云函数入口按真实context.SOURCE识别HTTP且缺少认证进入AUTH_MISSING', async () => {
@@ -421,6 +564,53 @@ test('云函数正式入口经HMAC后只调用现有rag.answer并投影安全字
     ])
     assert.ok(!JSON.stringify(result).includes('dish-4'))
     assert.ok(!JSON.stringify(result).includes('knowledgeId'))
+  } finally {
+    if (beforeSecret === undefined) delete process.env.FRAMEWORK_GATEWAY_SECRET
+    else process.env.FRAMEWORK_GATEWAY_SECRET = beforeSecret
+    if (beforeUniCloud === undefined) delete global.uniCloud
+    else global.uniCloud = beforeUniCloud
+  }
+})
+
+test('云函数正式入口只调用agent.run并投影proposal，不调用管理或执行入口', async () => {
+  const gatewayEntry = require('../uniCloud-aliyun/cloudfunctions/framework-gateway/index.js')
+  const calls = []
+  const beforeSecret = process.env.FRAMEWORK_GATEWAY_SECRET
+  const beforeUniCloud = global.uniCloud
+  process.env.FRAMEWORK_GATEWAY_SECRET = TEST_SECRET
+  global.uniCloud = {
+    importObject(name) {
+      calls.push(['importObject', name])
+      assert.equal(name, 'agent')
+      return {
+        async run(query) {
+          calls.push(['run', query])
+          return {
+            errCode: 0, query, answer: '请确认后加入购物车。', completed: true,
+            pendingAction: {
+              type: 'add_to_cart', dishId: 'dish-4', name: '柠檬茶', quantity: 2,
+              unitPrice: 12, totalPrice: 24, requiresConfirmation: true
+            },
+            trace: [{ private: true }]
+          }
+        },
+        runForAdmin() { throw new Error('must not run') },
+        testTool() { throw new Error('must not run') }
+      }
+    }
+  }
+  try {
+    const timestamp = String(Math.floor(Date.now() / 1000))
+    const result = await gatewayEntry.main(eventFor({
+      operation: 'agent_propose_action', arguments: { query: '把柠檬茶加两杯到购物车' }
+    }, { timestamp }), { SOURCE: 'http' })
+    assert.equal(result.errCode, 0)
+    assert.equal(result.data.pendingAction.totalPrice, 24)
+    assert.ok(!Object.hasOwn(result.data, 'trace'))
+    assert.deepEqual(calls, [
+      ['importObject', 'agent'],
+      ['run', '把柠檬茶加两杯到购物车']
+    ])
   } finally {
     if (beforeSecret === undefined) delete process.env.FRAMEWORK_GATEWAY_SECRET
     else process.env.FRAMEWORK_GATEWAY_SECRET = beforeSecret

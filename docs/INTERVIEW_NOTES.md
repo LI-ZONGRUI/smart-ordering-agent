@@ -2,7 +2,7 @@
 
 ## 30 秒项目介绍
 
-我用 Vue 3、uni-app、Pinia 和 uniCloud 做了一个微信智能点餐项目。除了菜单、购物车和云端订单闭环，还实现了 Evidence-first RAG、原生 Function Calling Ordering Agent，以及独立的 Python + FastAPI + LangChain + LangGraph 只读智能路由。模型负责开放式理解、证据或工具选择；价格、状态、副作用、订单确认和幂等由服务器与用户确认控制。当前 JS 818 项、Python 137 项自动化测试通过，并完成真实微信端、uniCloud 与 Qwen/LangChain/LangGraph 链路验收。
+我用 Vue 3、uni-app、Pinia 和 uniCloud 做了一个微信智能点餐项目。除了菜单、购物车和云端订单闭环，还实现了 Evidence-first RAG、原生 Function Calling Ordering Agent，以及独立的 Python + FastAPI + LangChain + LangGraph 智能路由。模型负责开放式理解、证据或工具选择和动作提案；价格、状态、副作用、订单确认和幂等由服务器与用户确认控制。当前 JS 832 项、Python 152 项自动化测试通过，并完成真实微信端、uniCloud 与 Qwen/LangChain/LangGraph 链路验收。
 
 ## 90 秒项目介绍
 
@@ -26,6 +26,12 @@ V7.2B 在同一个 StateGraph 中加入 `knowledge_query → rag_node`。它没�
 Python，而是通过 `RagGateway → HMAC Framework Gateway → rag_answer` 调用现有 uniCloud
 `rag.answer(query)`。真实“柠檬茶是什么味道？”案例返回了柠檬香气和红茶、柠檬配料事实；
 正式 API 仍不暴露 route、chunks、scores 或 evidence IDs。
+
+V7.2C 增加 `action_query → native_action_node`。该节点经认证 Gateway 复用现有 Native Agent，
+只接收经过服务端校验的加购 `pendingAction`。真实“把柠檬茶加两杯到购物车”案例返回数量 2、
+单价 12 元、合计 24 元并要求确认；“直接帮我付款”仍进入 `unsupported_action`，没有
+`pendingAction`。模型负责理解意图、选择 Tool 和生成 proposal，实时状态、价格、用户确认、
+幂等与交易持久化仍由确定性代码负责。
 
 ## 3 分钟项目介绍
 
@@ -198,9 +204,21 @@ requestId 是客户端为一次提交意图生成的幂等键；orderNo 是订�
 V7.1C 已有稳定的 LangChain Tool Agent，但缺少项目级显式 Workflow。LangGraph 负责请求
 路由、Graph State 和节点流转；菜单节点继续复用 LangChain `create_agent`，知识节点复用
 现有 uniCloud RAG。这样把“走哪条业务路径”“菜单查询中如何调用 Tool”和“知识问答如何
-grounding”分开。当前图没有 Native Agent 路由、checkpointer、conversation memory 或多轮状态。
+grounding”分开。V7.2C 的 Native Agent 路由也只生成 proposal；当前图没有 checkpointer、
+`thread_id`、conversation history、多轮状态或多轮确认。
 
-### 28. 为什么不把 RAG 复制到 Python？
+### 28. 为什么不让 LangGraph 直接执行购物车或订单？
+
+LLM 适合 intent understanding、Tool selection 和 proposal generation，但交易正确性需要实时
+价格与状态校验、明确用户确认、幂等键、唯一约束和持久化结果。项目因此采用 Human-in-the-loop：
+`User intent → Native Agent → pendingAction → frontend UI → explicit confirmation → deterministic execution`。
+LangGraph 与 Native Agent 都不会因为产生 `pendingAction` 而自动修改购物车或创建订单。
+
+早期真实验收中，Native Agent 自由文本曾提示“回复确认，我再执行”，但系统没有 `thread_id`、
+conversation memory 或文本确认后的执行能力。最终由 `native_action_node` 根据已验证的
+`pendingAction` 确定性生成提示，名称、数量、单价和总价都来自该合同，从而避免错误能力暗示。
+
+### 29. 为什么不把 RAG 复制到 Python？
 
 uniCloud RAG 已有稳定的 Embedding、Exact Retrieval、Top-3、Evidence-first grounding 和
 服务器确定性渲染。Python 这一层只需要 orchestration，因此通过认证 Gateway 复用正式能力，
@@ -223,7 +241,8 @@ uniCloud RAG 已有稳定的 Embedding、Exact Retrieval、Top-3、Evidence-firs
 - 未决 requestId 与 frozen payload 不跨刷新或小程序重启恢复。
 - 没有支付、库存事务或 exactly-once distributed transaction。
 - 没有 production-scale Vector DB。
-- LangGraph 当前只负责单轮顶层路由；没有 Native Agent integration、checkpointer、thread
-  ID、conversation memory、multi-turn chat 或前端聊天 UI。
+- LangGraph 当前负责五路单轮顶层路由，并包含 proposal-only Native Agent integration；没有
+  checkpointer、`thread_id`、conversation history、multi-turn state、多轮确认、长期记忆或
+  前端 ChatGPT 风格聊天 UI。
 
 这些边界说明当前工程验证覆盖到哪里，也给出了下一步可以被独立评测的方向。

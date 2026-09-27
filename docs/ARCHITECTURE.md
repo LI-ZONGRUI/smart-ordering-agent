@@ -19,7 +19,10 @@ LangChain `create_agent`、Structured Tools、Gateway 和真实菜单数据的�
 结果归一化，现有 LangChain Agent 继续负责菜单 Tool Loop。smalltalk、真实 Qwen 菜单查询和
 只读拒绝均已通过本地 FastAPI 正式入口验收。V7.2B 新增 `knowledge_query → rag_node`，经
 `RagGateway → HMAC Framework Gateway → rag_answer` 复用现有 uniCloud RAG；四条闭合路由
-均已完成真实验收。该图没有引入记忆、checkpointer 或多轮历史，该服务也不拥有数据库或
+均已完成真实验收。V7.2C 再加入 `action_query → native_action_node`，经同一认证 Gateway 的
+`agent_propose_action` 调用现有 Native Agent，并已完成真实 action proposal 与支付拒绝验收。
+当前五条闭合路由为 `menu_query`、`knowledge_query`、`action_query`、`smalltalk` 和
+`unsupported_action`。该图没有引入记忆、checkpointer 或多轮历史，该服务也不拥有数据库或
 交易职责。
 
 V7.1B-1 已把 Native Agent 的三个只读菜单能力抽取到 uniCloud Shared Menu Domain，并让
@@ -57,10 +60,12 @@ graph TB
     LC[LangChain create_agent]
     GW[MenuGateway Port]
     RGW[RagGateway Port]
+    AGW[ActionGateway Port]
     SMALL[Smalltalk / Read-only Boundary]
     FASTAPI --> LG
     LG --> LC --> GW
     LG --> RGW
+    LG --> AGW
     LG --> SMALL
   end
 
@@ -100,6 +105,7 @@ graph TB
   OS --> ORD
   GW --> FGW
   RGW --> FGW
+  AGW --> FGW
   FGW --> RAGOBJ
 
   AI --> REC
@@ -130,6 +136,9 @@ Python LangChain Service ── MenuGateway ── UniCloudHttpMenuGateway
 
 Python LangGraph rag_node ── RagGateway ── same authenticated HTTP adapter
         └──────────────────── rag_answer ── existing uniCloud rag.answer(query)
+
+Python LangGraph native_action_node ── ActionGateway ── same authenticated HTTP adapter
+        └──────────────────── agent_propose_action ── existing Native Agent proposal
 ```
 
 Python Adapter 与协议已完成真实 Gateway 验收。V7.1C 进一步通过本地受控验收脚本调用真实
@@ -298,6 +307,14 @@ sequenceDiagram
 `prepare_add_to_cart` 只接受 dishId 与1～20整数 quantity。服务器重新读取 status 与 price，生成 `requiresConfirmation=true` 的提案。微信 UI 确认时再次读取菜单；不存在、售罄或价格变化都会让旧提案失效。
 
 LLM 不持有任意 Store 引用，不接受动态实现路径，也不能绕过 Executor 直接修改 Cart。
+Native Agent Registry 只包含上述三个只读菜单 Tool 与 proposal-only 的
+`prepare_add_to_cart`，不包含 `createConfirmedOrder`、payment 或 confirmed transaction
+execution。V7.2C 的 `native_action_node` 只根据已验证 `pendingAction` 确定性渲染用户提示；
+真实支付请求进入 `unsupported_action`，不会产生 proposal。
+
+离线无副作用测试实际运行现有 Native Runner，并让 DB fixture 的 `add`、`update`、`remove`
+一旦被调用就立即失败。测试只观察到 dishes read，没有 cart mutation、order insert、
+confirmed execution 或 executed flag。
 
 ## 7. Order Transaction Flow
 
@@ -371,9 +388,9 @@ RAG 端到端评测使用21条知识与12条固定 Query：
 - Evidence Hit Rate：5/6 supported，83.33%。
 - Server Grounding Pass：12/12，100%。
 
-这是项目级小样本评测，不是生产 Benchmark。V6 冻结时为747项自动化测试；V7.2B
-Finalization 时完整 JavaScript 测试为818项，Python 测试为137项，并另有微信开发者工具、
-真实 uniCloud 数据库、管理入口、URL 化 Gateway 与四条 LangGraph 路由验收记录。
+这是项目级小样本评测，不是生产 Benchmark。V6 冻结时为747项自动化测试；V7.2C
+Finalization 时完整回归为832项 JavaScript 测试与152项 Python 测试，并另有微信开发者工具、
+真实 uniCloud 数据库、管理入口、URL 化 Gateway 与五条 LangGraph 路由验收记录。
 
 ## 9. 信任边界
 
@@ -395,8 +412,8 @@ Finalization 时完整 JavaScript 测试为818项，Python 测试为137项，并
 - Pinia Cart、Pending Action 与未决提交恢复不跨小程序重启持久化。
 - 没有支付、库存事务、uni-id 或 exactly-once distributed transaction。
 - 没有生产规模 Vector DB、ANN、分布式检索和生产治理。
-- 没有 Native Agent LangGraph delegation、checkpointer、thread ID、conversation memory、
-  multi-turn chat 或 Python Framework 前端聊天 UI。
+- 已有 Native Agent proposal-only LangGraph delegation；没有 checkpointer、thread ID、
+  conversation history、multi-turn state、多轮确认、长期记忆或 Python Framework 前端聊天 UI。
 
 下一步应先扩充评测与失败样本，再基于冻结 baseline 比较检索、Evidence Selection 和持久化恢复方案，而不是直接扩大 Agent 权限。
 

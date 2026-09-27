@@ -173,6 +173,120 @@ async def test_rag_answer_reuses_the_same_signed_transport_and_returns_only_safe
     assert SECRET not in json.dumps(headers)
 
 
+@pytest.mark.asyncio
+async def test_action_proposal_reuses_signed_transport_and_validates_pending_action() -> None:
+    observed: dict[str, object] = {}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        observed.update(headers=dict(request.headers), content=request.content)
+        return _success(
+            "agent_propose_action",
+            {
+                "query": "把柠檬茶加两杯到购物车",
+                "answer": "已准备两杯柠檬茶，请确认后再加入购物车。",
+                "completed": True,
+                "pendingAction": {
+                    "type": "add_to_cart",
+                    "dishId": "dish-4",
+                    "name": "柠檬茶",
+                    "quantity": 2,
+                    "unitPrice": 12,
+                    "totalPrice": 24,
+                    "requiresConfirmation": True,
+                },
+            },
+        )
+
+    gateway, client = _gateway(handler)
+    try:
+        result = await gateway.propose_action(" 把柠檬茶加两杯到购物车 ")
+    finally:
+        await client.aclose()
+
+    assert result["pendingAction"] == {
+        "type": "add_to_cart",
+        "dishId": "dish-4",
+        "name": "柠檬茶",
+        "quantity": 2,
+        "unitPrice": 12,
+        "totalPrice": 24,
+        "requiresConfirmation": True,
+    }
+    assert observed["content"] == (
+        '{"operation":"agent_propose_action","arguments":'
+        '{"query":"把柠檬茶加两杯到购物车"}}'.encode()
+    )
+    headers = observed["headers"]
+    assert isinstance(headers, dict)
+    assert headers["x-framework-signature-version"] == "v1"
+    assert "x-framework-signature" in headers
+    assert SECRET not in json.dumps(headers)
+
+
+@pytest.mark.parametrize("query", ["", " ", "中" * 201])
+@pytest.mark.asyncio
+async def test_action_proposal_rejects_invalid_query_before_http(query: str) -> None:
+    requests = 0
+
+    def handler(_request: httpx.Request) -> httpx.Response:
+        nonlocal requests
+        requests += 1
+        return httpx.Response(500)
+
+    gateway, client = _gateway(handler)
+    try:
+        with pytest.raises(FrameworkError, match="FRAMEWORK_GATEWAY_REQUEST_FAILED"):
+            await gateway.propose_action(query)
+    finally:
+        await client.aclose()
+    assert requests == 0
+
+
+@pytest.mark.parametrize(
+    "data",
+    [
+        {"query": "加购", "answer": "请确认", "completed": True},
+        {
+            "query": "加购",
+            "answer": "请确认",
+            "completed": True,
+            "pendingAction": {
+                "type": "add_to_cart",
+                "dishId": "dish-4",
+                "name": "柠檬茶",
+                "quantity": 2,
+                "unitPrice": 12,
+                "totalPrice": 25,
+                "requiresConfirmation": True,
+            },
+        },
+        {
+            "query": "加购",
+            "answer": "请确认",
+            "completed": True,
+            "pendingAction": {
+                "type": "add_to_cart",
+                "dishId": "dish-4",
+                "name": "柠檬茶",
+                "quantity": 2,
+                "unitPrice": 12,
+                "totalPrice": 24,
+                "requiresConfirmation": True,
+                "execute": True,
+            },
+        },
+    ],
+)
+@pytest.mark.asyncio
+async def test_action_proposal_rejects_malformed_or_widened_response(data: object) -> None:
+    gateway, client = _gateway(lambda _request: _success("agent_propose_action", data))
+    try:
+        with pytest.raises(FrameworkError, match="FRAMEWORK_GATEWAY_RESPONSE_INVALID"):
+            await gateway.propose_action("加购")
+    finally:
+        await client.aclose()
+
+
 @pytest.mark.parametrize("query", ["", " ", "中" * 201])
 @pytest.mark.asyncio
 async def test_rag_answer_rejects_invalid_query_before_http(query: str) -> None:

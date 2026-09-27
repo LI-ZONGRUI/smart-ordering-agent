@@ -16,6 +16,7 @@ from app.errors import (
     model_request_failed,
     model_response_invalid,
 )
+from app.gateways.action import PendingAction
 from app.gateways.base import MenuGateway
 from app.llm import build_qwen_model
 from app.tools.menu import build_menu_tools
@@ -59,6 +60,7 @@ class AgentResult:
     answer: str
     completed: bool
     trace: tuple[dict[str, Any], ...] = ()
+    pending_action: PendingAction | None = None
 
 
 def _extract_answer(messages: list[Any]) -> str:

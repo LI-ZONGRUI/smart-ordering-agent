@@ -52,6 +52,41 @@ def test_valid_query_is_trimmed_and_response_is_narrow(client: TestClient) -> No
     assert "similarity" not in response.text
 
 
+def test_action_proposal_is_an_optional_backward_compatible_response_field(
+    client: TestClient,
+) -> None:
+    async def runner(query: str) -> AgentResult:
+        return AgentResult(
+            query=query,
+            answer="已准备两杯柠檬茶，请确认后再加入购物车。",
+            completed=True,
+            pending_action={
+                "type": "add_to_cart",
+                "dishId": "dish-4",
+                "name": "柠檬茶",
+                "quantity": 2,
+                "unitPrice": 12,
+                "totalPrice": 24,
+                "requiresConfirmation": True,
+            },
+        )
+
+    _override_runner(runner)
+    response = client.post("/v1/agent/run", json={"query": "把柠檬茶加两杯到购物车"})
+    assert response.status_code == 200
+    assert response.json()["pendingAction"] == {
+        "type": "add_to_cart",
+        "dishId": "dish-4",
+        "name": "柠檬茶",
+        "quantity": 2,
+        "unitPrice": 12.0,
+        "totalPrice": 24.0,
+        "requiresConfirmation": True,
+    }
+    for forbidden in ("trace", "messages", "prompt", "reasoning", "executed"):
+        assert forbidden not in response.text
+
+
 @pytest.mark.parametrize("query", ["", "   ", 7, None, "字" * 201])
 def test_invalid_query_contract(client: TestClient, query: object) -> None:
     response = client.post("/v1/agent/run", json={"query": query})

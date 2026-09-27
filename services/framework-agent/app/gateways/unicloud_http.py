@@ -13,6 +13,7 @@ from app.errors import (
     gateway_response_invalid,
     gateway_timeout,
 )
+from app.gateways.action import ActionProposalResult, PendingAction
 from app.gateways.base import DishDetailResult, MenuGateway, MenuItemDetail, MenuSearchResult
 from app.gateways.rag import KnowledgeAnswer
 from app.gateways.signing import Clock, NonceFactory, build_auth_headers, encode_json_body
@@ -106,6 +107,68 @@ def _knowledge_answer(data: object, *, query: str) -> KnowledgeAnswer:
     }
 
 
+def _pending_action(value: object) -> PendingAction | None:
+    if value is None:
+        return None
+    expected = {
+        "type",
+        "dishId",
+        "name",
+        "quantity",
+        "unitPrice",
+        "totalPrice",
+        "requiresConfirmation",
+    }
+    if not isinstance(value, dict) or set(value) != expected:
+        raise gateway_response_invalid()
+    quantity = value.get("quantity")
+    unit_price = value.get("unitPrice")
+    total_price = value.get("totalPrice")
+    if (
+        value.get("type") != "add_to_cart"
+        or not _nonempty(value.get("dishId"))
+        or not _nonempty(value.get("name"))
+        or type(quantity) is not int
+        or not 1 <= quantity <= 20
+        or not _valid_price(unit_price)
+        or not _valid_price(total_price)
+        or round(unit_price * 100) * quantity != round(total_price * 100)
+        or value.get("requiresConfirmation") is not True
+    ):
+        raise gateway_response_invalid()
+    return {
+        "type": "add_to_cart",
+        "dishId": value["dishId"].strip(),
+        "name": value["name"].strip(),
+        "quantity": quantity,
+        "unitPrice": unit_price,
+        "totalPrice": total_price,
+        "requiresConfirmation": True,
+    }
+
+
+def _action_proposal(data: object, *, query: str) -> ActionProposalResult:
+    if not isinstance(data, dict) or set(data) != {
+        "query",
+        "answer",
+        "completed",
+        "pendingAction",
+    }:
+        raise gateway_response_invalid()
+    if (
+        data.get("query") != query
+        or not _nonempty(data.get("answer"))
+        or data.get("completed") is not True
+    ):
+        raise gateway_response_invalid()
+    return {
+        "query": query,
+        "answer": data["answer"].strip(),
+        "completed": True,
+        "pendingAction": _pending_action(data["pendingAction"]),
+    }
+
+
 class UniCloudHttpMenuGateway(MenuGateway):
     """One-request-per-operation adapter; menu rules remain in the Shared Domain."""
 
@@ -193,6 +256,15 @@ class UniCloudHttpMenuGateway(MenuGateway):
             raise gateway_request_failed()
         data = await self._request("rag_answer", {"query": clean})
         return _knowledge_answer(data, query=clean)
+
+    async def propose_action(self, query: str) -> ActionProposalResult:
+        """Ask the existing Native Agent for a validated proposal without executing it."""
+
+        clean = query.strip() if isinstance(query, str) else ""
+        if not 1 <= len(clean) <= 200:
+            raise gateway_request_failed()
+        data = await self._request("agent_propose_action", {"query": clean})
+        return _action_proposal(data, query=clean)
 
 
 def build_menu_gateway(

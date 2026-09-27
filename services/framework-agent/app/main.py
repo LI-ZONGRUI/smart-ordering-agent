@@ -30,8 +30,8 @@ async def get_agent_runner() -> AgentRunner:
     gateway = build_menu_gateway()
     try:
         agent = build_production_agent(gateway)
-        # 同一个认证HTTP适配器实现MenuGateway与RagGateway，复用HMAC和连接生命周期。
-        workflow = build_framework_workflow(agent, gateway)
+        # 同一个认证HTTP适配器承载菜单、RAG与只读动作提案，复用HMAC和连接生命周期。
+        workflow = build_framework_workflow(agent, gateway, gateway)
     except Exception:
         await gateway.aclose()
         raise
@@ -78,7 +78,7 @@ async def health() -> dict[str, str]:
     return {"status": "ok", "service": "framework-agent"}
 
 
-@app.post("/v1/agent/run", response_model=AgentRunResponse)
+@app.post("/v1/agent/run", response_model=AgentRunResponse, response_model_exclude_none=True)
 async def run_agent(
     request: AgentRunRequest,
 ) -> AgentRunResponse | JSONResponse:
@@ -98,4 +98,5 @@ async def run_agent(
         query=result.query,
         answer=result.answer,
         completed=result.completed,
+        pendingAction=result.pending_action,
     )

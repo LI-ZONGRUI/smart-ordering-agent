@@ -5,17 +5,36 @@ from typing import Protocol
 
 from app.agent import AgentResult
 from app.errors import internal_error
+from app.gateways.action import ActionProposalGateway, PendingAction
 from app.gateways.rag import RagGateway
 from app.graph.state import FRAMEWORK_ROUTES, FrameworkGraphState
 
 GraphNode = Callable[[FrameworkGraphState], Awaitable[dict[str, object]]]
 
 SMALLTALK_ANSWER = "你好，我可以帮你查询当前菜单中的菜品、价格和在售状态。"
-READONLY_ANSWER = "当前助手仅支持菜单查询，不能修改购物车、创建订单或进行支付。"
+READONLY_ANSWER = "".join(
+    ("当前助手可以查询菜单并准备待确认的购物车操作，", "但不能直接创建订单、支付或执行其他写操作。")
+)
 
 
 class MenuAgentRunner(Protocol):
     async def run(self, query: str, *, include_trace: bool = False) -> AgentResult: ...
+
+
+def render_pending_action(action: PendingAction) -> str:
+    """Render only validated proposal facts without promising a future chat turn."""
+
+    unit_price = f"{action['unitPrice']:g}"
+    total_price = f"{action['totalPrice']:g}"
+    return "\n".join(
+        (
+            "已为你准备待确认的购物车操作：",
+            f"- {action['name']} × {action['quantity']}",
+            f"- 单价 {unit_price} 元",
+            f"- 合计 {total_price} 元",
+            "请在点餐界面确认后执行。",
+        )
+    )
 
 
 def build_menu_agent_node(agent: MenuAgentRunner) -> GraphNode:
@@ -38,6 +57,29 @@ def build_rag_node(gateway: RagGateway) -> GraphNode:
     return rag_node
 
 
+def build_native_action_node(gateway: ActionProposalGateway) -> GraphNode:
+    """Delegate safe proposals to the Native Agent; never execute the proposed action."""
+
+    async def native_action_node(state: FrameworkGraphState) -> dict[str, object]:
+        result = await gateway.propose_action(state["query"])
+        pending_action = result["pendingAction"]
+        output: dict[str, object] = {
+            # Native Agent的自由文本仅用于无提案结果；合法提案由服务器确定性渲染，
+            # 避免承诺尚未实现的多轮“回复确认后执行”能力。
+            "answer": (
+                render_pending_action(pending_action)
+                if pending_action is not None
+                else result["answer"]
+            ),
+            "completed": result["completed"],
+        }
+        if pending_action is not None:
+            output["pendingAction"] = pending_action
+        return output
+
+    return native_action_node
+
+
 async def smalltalk_response(_state: FrameworkGraphState) -> dict[str, object]:
     return {"answer": SMALLTALK_ANSWER, "completed": True}
 
@@ -57,4 +99,8 @@ def normalize_result(state: FrameworkGraphState) -> dict[str, object]:
         or route not in FRAMEWORK_ROUTES
     ):
         raise internal_error()
-    return {"answer": answer.strip(), "completed": completed}
+    result: dict[str, object] = {"answer": answer.strip(), "completed": completed}
+    pending_action = state.get("pendingAction")
+    if pending_action is not None:
+        result["pendingAction"] = pending_action
+    return result

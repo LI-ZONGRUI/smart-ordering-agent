@@ -107,6 +107,33 @@ function cleanString(value, maximum) {
   return clean
 }
 
+function validPrice(value) {
+  if (typeof value !== 'number' || !Number.isFinite(value) || value < 0) return false
+  const cents = Math.round(value * 100)
+  return Number.isSafeInteger(cents) && Math.abs(cents - value * 100) <= 0.000001
+}
+
+function projectPendingAction(value) {
+  if (value === undefined || value === null) return null
+  const keys = ['type', 'dishId', 'name', 'quantity', 'unitPrice', 'totalPrice', 'requiresConfirmation']
+  if (!exactKeys(value, keys) || value.type !== 'add_to_cart' ||
+      typeof value.dishId !== 'string' || !value.dishId.trim() ||
+      typeof value.name !== 'string' || !value.name.trim() ||
+      !Number.isInteger(value.quantity) || value.quantity < 1 || value.quantity > 20 ||
+      !validPrice(value.unitPrice) || !validPrice(value.totalPrice) ||
+      Math.round(value.unitPrice * 100) * value.quantity !== Math.round(value.totalPrice * 100) ||
+      value.requiresConfirmation !== true) throw new Error()
+  return {
+    type: value.type,
+    dishId: value.dishId.trim(),
+    name: value.name.trim(),
+    quantity: value.quantity,
+    unitPrice: value.unitPrice,
+    totalPrice: value.totalPrice,
+    requiresConfirmation: true
+  }
+}
+
 const operationDefinitions = Object.freeze({
   search_menu: Object.freeze({
     validate(argumentsValue) {
@@ -144,6 +171,27 @@ const operationDefinitions = Object.freeze({
       // Gateway只投影正式回答需要的安全字段，不暴露证据ID、检索分数或内部元数据。
       return { query, answerable, answer: cleanString(answer, 4000) }
     }
+  }),
+  agent_propose_action: Object.freeze({
+    validate(argumentsValue) {
+      if (!exactKeys(argumentsValue, ['query'])) throw new GatewayError('FRAMEWORK_GATEWAY_REQUEST_INVALID')
+      return { query: cleanString(argumentsValue.query, 200) }
+    },
+    async execute(_domain, args, _ragAnswer, agentProposeAction) {
+      const result = await agentProposeAction(args.query)
+      const errCode = ownData(result, 'errCode')
+      const query = ownData(result, 'query')
+      const answer = ownData(result, 'answer')
+      const completed = ownData(result, 'completed')
+      if (errCode !== 0 || query !== args.query || completed !== true) throw new Error()
+      // 只投影现有稳定提案合同；trace、messages、模型原始响应与内部字段不能跨越Gateway。
+      return {
+        query,
+        answer: cleanString(answer, 4000),
+        completed: true,
+        pendingAction: projectPendingAction(ownData(result, 'pendingAction'))
+      }
+    }
   })
 })
 
@@ -159,10 +207,12 @@ function parseRequest(bodyBytes) {
   return { operation: body.operation, arguments: definition.validate(body.arguments), definition }
 }
 
-function createFrameworkGateway({ domain, ragAnswer, getSecret = () => process.env.FRAMEWORK_GATEWAY_SECRET,
+function createFrameworkGateway({ domain, ragAnswer, agentProposeAction,
+  getSecret = () => process.env.FRAMEWORK_GATEWAY_SECRET,
   now = () => Math.floor(Date.now() / 1000), cryptoModule = crypto } = {}) {
   if (!domain || typeof domain !== 'object') throw new TypeError('domain is required')
   if (typeof ragAnswer !== 'function') throw new TypeError('ragAnswer is required')
+  if (typeof agentProposeAction !== 'function') throw new TypeError('agentProposeAction is required')
   return async function handle(event) {
     try {
       const secret = getSecret()
@@ -175,7 +225,9 @@ function createFrameworkGateway({ domain, ragAnswer, getSecret = () => process.e
       verifyAuthentication({ event, bodyBytes, secret, nowSeconds: now(), cryptoModule })
       const request = parseRequest(bodyBytes)
       try {
-        const data = await request.definition.execute(domain, request.arguments, ragAnswer)
+        const data = await request.definition.execute(
+          domain, request.arguments, ragAnswer, agentProposeAction
+        )
         if (!data || typeof data !== 'object' || Array.isArray(data)) throw new Error()
         return { errCode: 0, operation: request.operation, data }
       } catch {
