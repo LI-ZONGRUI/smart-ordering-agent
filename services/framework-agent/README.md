@@ -58,7 +58,7 @@ in-memory checkpointer is development, single-process state. It is lost on resta
 cross-process consistency or thread eviction, and is not persistent memory, identity,
 authentication, authorization, or an execution token.
 
-V7.3B prepares an opt-in durable conversation mode with the official asynchronous LangGraph
+V7.3B adds an opt-in durable conversation mode with the official asynchronous LangGraph
 SQLite checkpointer (`langgraph-checkpoint-sqlite==3.1.1`, with indirect
 `aiosqlite==0.22.1`). A server-created conversation returns a high-entropy capability token once;
 only its SHA-256 digest is stored, and resume/history requests require both the generated
@@ -74,6 +74,14 @@ two safe user/assistant turns, while an obviously wrong test token returned
 `FRAMEWORK_CONVERSATION_ACCESS_DENIED`. SQLite provides restart persistence only when the same
 database file is on a persistent host filesystem. It does not provide distributed consistency,
 multi-instance safety, user identity, transaction authorization, or long-term user memory.
+
+**V7.3C WeChat conversation integration has completed real DevTools acceptance.** The client used a
+durable capability to run menu, contextualized price, RAG taste, and action-proposal turns; leaving
+and reopening the page restored safe text history, and restarting FastAPI with the same SQLite file
+also restored the conversation. A validated lemon-tea ×2 proposal was executed only after the user
+clicked the UI confirmation card, which re-read the live uniCloud menu before the existing Pinia
+mutation. A typed “确认” remained an ordinary query and caused no second cart write, order, or payment.
+Old proposal cards are not part of History and are not reconstructed from text.
 
 The controlled real acceptance used this sequence:
 
@@ -480,8 +488,10 @@ container deployment is claimed.
 
 - **V7.1A complete locally:** Python service, adapter, gateway port, read-only tools, real
   LangChain loop with an offline model, HTTP and safety tests.
-- **Not complete:** Python service remote deployment, frontend framework integration, persistent
-  checkpointer, cross-process conversation state, multi-turn confirmation and long-term memory.
+- **Still outside scope:** production Framework Agent deployment, distributed/multi-instance
+  checkpointing, account ownership and cross-device sync, conversation list, token lifecycle UI,
+  text-confirmed transaction execution and long-term profile memory. The accepted WeChat client
+  uses one local conversation capability and explicit UI confirmation.
 - **V7.1B-1 accepted on real uniCloud:** shared domain and authenticated server-side Gateway. The
   Python service did not participate in that acceptance.
 - **V7.1B-2 accepted against real uniCloud:** Python `UniCloudHttpMenuGateway`, HMAC v1 client,
@@ -501,6 +511,12 @@ container deployment is claimed.
 - **V7.3A accepted with real Qwen/Gateway calls:** optional validated `threadId`, bounded
   user/assistant history, process-scoped `InMemorySaver`, contextualized menu/RAG/action follow-ups,
   thread isolation, stateless compatibility and safe text-confirmation rejection are verified.
+- **V7.3B accepted:** durable capability-protected conversations, safe History projection and
+  same-filesystem process-restart recovery are verified with `AsyncSqliteSaver`.
+- **V7.3C accepted in WeChat DevTools:** the conversation UI, history recovery, new conversation,
+  action card, live-menu revalidation and explicit Pinia cart confirmation are verified. LangGraph
+  does not perform cart, order or payment writes. Production access still requires HTTPS and a legal
+  WeChat request domain.
 
 ### Contextualizer acceptance diagnostic
 

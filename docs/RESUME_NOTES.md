@@ -4,7 +4,7 @@
 
 **基于 LLM + RAG + Function Calling 的微信智能点餐 Agent**
 
-技术栈：Vue 3、Composition API、uni-app、Pinia、uniCloud、Python 3.11、FastAPI、LangChain、LangGraph、Qwen3.8-Flash、qwen3.7-text-embedding-flash、Function Calling、JSON Schema、云数据库
+技术栈：Vue 3、Composition API、uni-app、Pinia、uniCloud、Python 3.11、FastAPI、LangChain、LangGraph、AsyncSqliteSaver、SQLite、Qwen3.8-Flash、qwen3.7-text-embedding-flash、Function Calling、JSON Schema、云数据库
 
 以下表述基于仓库真实实现、微信开发者工具验收和 uniCloud 云端验证。RAG 菜单问答与 Ordering Agent 是两项独立能力，当前没有把 `rag.answer()` 注册为 Agent Tool。
 
@@ -13,7 +13,7 @@
 - 构建 Vue 3 + uni-app 微信点餐闭环，使用 Pinia 管理购物车、uniCloud 持久化菜单与订单；在服务端重新校验菜品状态和价格、按整数分计算金额并保存订单快照，避免信任客户端价格。
 - 设计 Evidence-first RAG 菜单问答：将 21 条人工审核知识生成 512 维向量，以 Exact Cosine Top-3 检索，由 Qwen 只选择 evidence ID，再由服务器校验并按可信原文渲染答案；12 条固定云端评测中 Server Grounding Pass 为 12/12，Answerability 为 11/12。
 - 实现基于 Qwen 原生 Function Calling 的多步 Ordering Agent，通过 Tool Registry、Executor allowlist 与 JSON Schema 约束工具调用；真实验证模型可观察 `search_menu` 空结果后自主调用 `list_available_drinks`，并将加购限制为待确认 Proposal。
-- 基于 LangGraph `StateGraph` 构建五路智能工作流，并以 `AsyncSqliteSaver` 持久化受限会话状态，真实验证同一持久文件系统上的进程重启恢复；通过高熵 conversation capability token、SHA-256 digest 与安全 History API 保护特定会话访问，历史仅用于语义消歧，动态菜单事实仍读取实时 Tool。
+- 基于 LangGraph `StateGraph` 构建五路智能工作流，并以 `AsyncSqliteSaver` 持久化受限会话状态；在微信聊天 UI 中真实验证多轮上下文化、同一持久文件系统上的进程重启恢复和安全 History，通过 capability token 保护特定会话访问，动态菜单事实仍读取实时 Tool。
 - 建立人机确认与确定性交易边界：购物车动作经服务端复核和用户确认后才修改 Pinia；订单经过 Preview、最终确认、再次校价和逐项预期比较，并以 `requestId + SHA-256 fingerprint + UNIQUE sparse index` 实现同请求重放与冲突检测。
 
 > 指标口径：RAG 数据来自 21-chunk 小型知识库与 12-query 人工固定评测集（6 supported、3 unsupported-domain、3 external-OOD），属于项目级验证，不代表生产准确率。
@@ -23,14 +23,14 @@
 - 构建 Vue 3、uni-app、Pinia 与 uniCloud 微信点餐系统，完成云端菜单、购物车、订单预览、服务端实时校价、订单快照与持久化闭环。
 - 设计 21 条人工审核知识的 Evidence-first RAG，以 512 维 Embedding + Exact Cosine Top-3 检索，由模型选择证据、服务器渲染事实；12 条固定评测中 Answerability 11/12、Server Grounding 12/12。
 - 实现原生 Function Calling 多步 Agent 与 Human-in-the-loop 副作用控制，并通过 Preview 二次校价、`ORDER_CONFIRMATION_STALE`、requestId 指纹和数据库唯一索引保护订单确认与重试。
-- 使用 Python、FastAPI、LangGraph 与 LangChain 构建五路智能编排；以 `AsyncSqliteSaver`、conversation capability token 和 Qwen Contextualizer 支持可恢复的受限多轮语义消歧，动作分支只返回 `pendingAction`，由客户端显式确认后交给确定性代码执行。
+- 使用 Python、FastAPI、LangGraph 与 LangChain 构建五路智能编排；以 `AsyncSqliteSaver`、conversation capability token 和 Qwen Contextualizer 支持微信端可恢复的受限多轮对话，动作分支只返回 `pendingAction`，由 UI 显式确认后交给确定性代码执行。
 
 ## C. English Version (5 bullets)
 
 - Built a WeChat ordering flow with Vue 3, uni-app, Pinia, and uniCloud, including cloud-backed menus, cart management, server-side pricing, immutable order snapshots, and persisted order history.
 - Designed an evidence-first RAG pipeline over 21 human-reviewed knowledge chunks using 512-dimensional embeddings and exact cosine Top-3 retrieval; constrained Qwen to evidence selection and rendered factual answers on the server, achieving 11/12 answerability and 12/12 server-grounding passes on a fixed 12-query project evaluation set.
 - Implemented a multi-step Ordering Agent with native function calling, a centralized tool registry, executor allowlists, and JSON Schema validation; verified that the model can observe a failed menu search and select a second read tool without a hard-coded fallback.
-- Built an explicit five-route LangGraph `StateGraph` with `AsyncSqliteSaver`, per-conversation capability tokens, and a constrained Qwen contextualizer; validated process-restart recovery on the same persistent filesystem while keeping live Tools/RAG as factual sources and pending-action execution deterministic.
+- Built an explicit five-route LangGraph `StateGraph` with `AsyncSqliteSaver`, per-conversation capability tokens, and a constrained Qwen contextualizer; integrated a WeChat conversation UI and validated multi-turn history plus process-restart recovery on the same persistent filesystem while keeping Tools/RAG as factual sources.
 - Established human confirmation and deterministic transaction boundaries for side effects, with live cart revalidation, order preview and repricing, stale-confirmation rejection, and idempotent order creation using request IDs, canonical SHA-256 fingerprints, and a unique sparse database index.
 
 ## 推荐使用方式
@@ -45,5 +45,6 @@
 - RAG 为单轮菜单问答；LangGraph 可路由到独立 RAG 节点，但 RAG 不是 LangChain Agent Tool，Agent 不会在 Tool Loop 中自行调用它。
 - 当前使用 21 条知识和 Exact Search，没有生产规模 Vector DB。
 - Pending Action 与未决订单提交状态没有跨小程序重启恢复。
-- V7.3B 已真实验证同一持久文件系统上的进程重启恢复与安全 History API；当前没有跨机器/多实例
-  一致性、账户级跨设备同步、conversation list、token 生命周期管理、长期用户画像、多轮文本确认执行或前端聊天 UI。
+- V7.3C 已真实验证微信多轮聊天、History 恢复、同一持久文件系统上的 FastAPI 重启恢复和显式
+  UI 加购确认；当前没有跨机器/多实例一致性、账户级跨设备同步、conversation list、token 生命周期
+  管理、长期用户画像或多轮文本确认执行，旧 `pendingAction` 卡片也不随 History 恢复。

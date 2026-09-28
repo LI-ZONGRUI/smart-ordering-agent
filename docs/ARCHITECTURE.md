@@ -14,8 +14,8 @@ RAG 与 Ordering Agent 当前没有互相作为 Tool 调用；LangGraph 只在�
 V7.1A 在现有系统旁新增独立的 Python FastAPI + LangChain 框架服务。它通过
 `MenuGateway` 端口隔离菜单来源，并使用测试 fixture 完成离线编排验证。V7.1B-2 的正式
 `UniCloudHttpMenuGateway` 已完成真实 uniCloud 只读接入验收。V7.1C 又完成真实 Qwen、
-LangChain `create_agent`、Structured Tools、Gateway 和真实菜单数据的端到端验收；微信端仍未
-接入这条 Python 链路。V7.2A 已实现显式自定义 LangGraph `StateGraph`：顶层图负责路由和
+LangChain `create_agent`、Structured Tools、Gateway 和真实菜单数据的端到端验收。V7.2A 已实现
+显式自定义 LangGraph `StateGraph`：顶层图负责路由和
 结果归一化，现有 LangChain Agent 继续负责菜单 Tool Loop。smalltalk、真实 Qwen 菜单查询和
 只读拒绝均已通过本地 FastAPI 正式入口验收。V7.2B 新增 `knowledge_query → rag_node`，经
 `RagGateway → HMAC Framework Gateway → rag_answer` 复用现有 uniCloud RAG；四条闭合路由
@@ -24,7 +24,8 @@ LangChain `create_agent`、Structured Tools、Gateway 和真实菜单数据的�
 当前五条闭合路由为 `menu_query`、`knowledge_query`、`action_query`、`smalltalk` 和
 `unsupported_action`。V7.3A 通过可选 `threadId`、进程内 `InMemorySaver` 和受限 Qwen
 Contextualizer 增加短期多轮语义上下文；V7.3B 再以 `AsyncSqliteSaver`、单会话 capability token
-和安全 History API 实现同一持久文件系统上的进程重启恢复。该能力不改变交易职责边界。
+和安全 History API 实现同一持久文件系统上的进程重启恢复。V7.3C 已将该链路接入微信聊天页，
+并通过显式 UI 确认调用既有确定性购物车路径。该能力不改变交易职责边界。
 
 V7.1B-1 已把 Native Agent 的三个只读菜单能力抽取到 uniCloud Shared Menu Domain，并让
 Native Agent 与经过 HMAC-SHA256 认证的 URL 化 Framework Gateway 复用同一实现。Shared
@@ -38,6 +39,7 @@ Domain、Gateway 和真实 uniCloud 菜单读取均已完成云端验收。V7.1B
 graph TB
   subgraph Client[Client Layer]
     WX[WeChat Mini Program<br/>Vue 3 + uni-app]
+    CHAT[AI Assistant Chat UI<br/>Current Conversation Capability]
     PINIA[Pinia<br/>Cart + Order Query Cache]
   end
 
@@ -99,6 +101,7 @@ graph TB
   end
 
   WX --> PINIA
+  WX --> CHAT --> FASTAPI
   WX --> MS
   WX --> AIS
   WX --> RS
@@ -443,6 +446,35 @@ SQLite 只在同一持久文件系统上提供进程重启恢复，不承诺容�
 柠檬茶语义上下文；动态价格仍重新进入实时菜单路径。History API 返回两轮安全消息，错误 token
 统一返回 `FRAMEWORK_CONVERSATION_ACCESS_DENIED`。
 
+### 8.2 V7.3C WeChat Conversation UI
+
+```text
+WeChat Chat UI
+ → Framework Agent service
+ → FastAPI durable conversation
+ → Contextualizer + five-route LangGraph
+ → safe answer / validated pendingAction
+
+pendingAction
+ → explicit UI confirmation
+ → live uniCloud menu revalidation
+ → existing Pinia addDish
+```
+
+真实微信开发者工具验收连续覆盖“有柠檬茶吗？”、“多少钱？”、“它是什么味道？”和“那来两杯。”：
+菜单事实继续读取实时 Tool，知识追问继续复用现有 RAG，动作分支只返回柠檬茶 ×2、单价 12 元、
+合计 24 元的已验证提案。页面没有展示 dishId、route、Tool 名称、raw JSON、reasoning、token 或
+checkpoint 内部字段。
+
+点击动作卡确认后，前端重新读取实时菜单并校验状态与价格，再调用既有 Pinia `addDish`；购物车
+最终为柠檬茶 ×2、合计 ¥24。本次没有创建订单或支付。文字“确认”仍作为普通 Query，既没有
+重复加购，也没有进入订单路径。CLI 直接运行小程序时缺少已关联的 uniCloud 运行环境，实时复核
+安全失败且没有写 Cart；改用 HBuilderX 连接远程服务空间后复核和加购成功。
+
+页面退出重进和 FastAPI 完全重启后均通过本地 capability 与同一 SQLite 文件恢复安全文字历史。
+新对话创建新的 threadId/token，但不删除旧会话。History 不包含 `pendingAction`，动作卡是
+session-local UI state。该验收不代表跨机器、多实例、跨设备账户同步或文本确认执行。
+
 ## 9. Evaluation 与测试
 
 RAG 端到端评测使用21条知识与12条固定 Query：
@@ -456,8 +488,8 @@ RAG 端到端评测使用21条知识与12条固定 Query：
 - Evidence Hit Rate：5/6 supported，83.33%。
 - Server Grounding Pass：12/12，100%。
 
-这是项目级小样本评测，不是生产 Benchmark。V6 冻结时为747项自动化测试；V7.3B
-Finalization 时完整回归为832项 JavaScript 测试与197项 Python 测试，并另有微信开发者工具、
+这是项目级小样本评测，不是生产 Benchmark。V6 冻结时为747项自动化测试；V7.3C
+当前完整回归为851项 JavaScript 测试与197项 Python 测试，并另有微信开发者工具、
 真实 uniCloud 数据库、管理入口、URL 化 Gateway 与五条 LangGraph 路由验收记录。
 
 ## 10. 信任边界
@@ -482,7 +514,8 @@ Finalization 时完整回归为832项 JavaScript 测试与197项 Python 测试�
 - 没有生产规模 Vector DB、ANN、分布式检索和生产治理。
 - 已完成 `AsyncSqliteSaver`、capability token、安全 History API 和同一持久文件系统真实重启验收。
   没有跨机器/多实例保证、conversation list、账户级跨设备身份、token expiry/rotation/revocation、
-  多轮文本确认执行、长期记忆或 Python Framework 前端聊天 UI。
+  多轮文本确认执行或长期记忆。V7.3C 微信聊天 UI 已完成真实验收，旧动作卡不随 History 恢复。
+- Framework Agent 生产接入仍要求 HTTPS 合法域名；本地开发者工具关闭域名校验不属于生产配置。
 
 下一步应先扩充评测与失败样本，再基于冻结 baseline 比较检索、Evidence Selection 和持久化恢复方案，而不是直接扩大 Agent 权限。
 

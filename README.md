@@ -9,8 +9,8 @@ RAG 与 Ordering Agent 是两项独立能力：RAG 负责菜单知识问答，Ag
 V7.1A 另行建立了一个独立的 Python 3.11 + FastAPI + LangChain 框架服务。它先用离线模型
 完成 `create_agent` 多步编排测试，V7.1B-2 再通过正式 `UniCloudHttpMenuGateway` 完成 Python
 到真实 uniCloud 菜单的只读验收。V7.1C 已使用真实 Qwen3.8-Flash 完成 LangChain、三个
-Structured Tools、HMAC Gateway 与真实菜单数据的端到端验收；微信前端仍未接入这条 Python
-链路。V7.2A 已加入项目自有的显式 LangGraph `StateGraph`，并通过 FastAPI 正式入口完成
+Structured Tools、HMAC Gateway 与真实菜单数据的端到端验收。V7.2A 已加入项目自有的显式
+LangGraph `StateGraph`，并通过 FastAPI 正式入口完成
 smalltalk、真实 Qwen 菜单查询和只读拒绝三条路由验收。V7.2B 进一步加入
 `knowledge_query → rag_node`：通过同一 HMAC Gateway 的只读 `rag_answer` 复用现有 uniCloud
 RAG，并已完成菜单查询、知识问答、闲聊和写操作拒绝四条正式 API 路径的真实验收。详见
@@ -38,6 +38,7 @@ Gateway Client，通过完全离线的 MockTransport + LangChain Tool Loop 测�
 3. **Human-in-the-loop Side Effects**：LLM 只能生成经过服务端校验的 Pending Action，用户明确确认并再次复核实时菜单后，才修改 Pinia Cart。
 4. **Deterministic Transaction Boundary**：订单预览、实时计价、确认值比较和持久化全部由普通服务端逻辑执行，不交给 Qwen。
 5. **Idempotent Order Creation**：`requestId + canonical fingerprint + UNIQUE sparse index` 为同一订单意图提供服务端重放语义。
+6. **Durable WeChat Conversation UI**：微信聊天页通过 capability token 恢复安全历史，以 `AsyncSqliteSaver` 支持同一持久文件系统上的进程重启恢复，并用 UI 显式确认隔离动作提案与购物车副作用。
 
 ## Demo / Screenshots
 
@@ -59,12 +60,24 @@ graph TD
   U[User] --> W[WeChat Mini Program<br/>Vue 3 + uni-app]
   W --> P[Pinia Cart / Order Cache]
   W --> S[Application Services]
+  W --> FC[Framework Agent Client<br/>Current Conversation Capability]
+
+  FC --> FAPI[Python 3.11 + FastAPI]
+  FAPI --> LG[LangGraph Five-route Workflow]
+  FAPI --> SQL[(SQLite / AsyncSqliteSaver)]
+  LG --> LCA[LangChain Menu Agent]
+  LG --> HMAC[HMAC Framework Gateway]
+  LCA --> HMAC
 
   S --> M[menu cloud object]
   S --> A[ai cloud object]
   S --> R[rag cloud object]
   S --> G[agent cloud object]
   S --> O[orders cloud object]
+
+  HMAC --> R
+  HMAC --> G
+  HMAC --> D
 
   A --> Q1[Qwen3.8-Flash<br/>Dish Recommendation]
 
@@ -239,7 +252,7 @@ Robustness 评测还发现 supported 与 unsupported 的相似度分布发生重
 | Client | Vue 3、Composition API、uni-app、Pinia、微信小程序 |
 | Backend | uniCloud 阿里云、云对象、云函数、云数据库 |
 | Models | Qwen3.8-Flash、qwen3.7-text-embedding-flash |
-| Agent Framework | LangChain、LangGraph StateGraph、FastAPI |
+| Agent Framework | Python 3.11、FastAPI、LangChain、LangGraph StateGraph、AsyncSqliteSaver |
 | Protocol | OpenAI-compatible Chat Completions / Embeddings、Native Function Calling |
 | Retrieval | 512-dimensional Embedding、Exact Cosine Similarity、Top-3 |
 | Validation | JSON Schema、Tool allowlist、服务端事实校验、整数分计价 |
@@ -249,9 +262,11 @@ Robustness 评测还发现 supported 与 unsupported 的相似度分布发生重
 
 ```text
 src/
- ├─ pages/                  # 业务、推荐、RAG、Agent 页面
- ├─ services/               # menu / orders / ai / rag / agent
- └─ stores/                 # Pinia Cart 与订单查询缓存
+ ├─ pages/                  # 业务、推荐、RAG、Agent 与会话页面
+ ├─ services/               # menu / orders / ai / rag / agent / framework-agent
+ └─ stores/                 # Pinia Cart、订单查询缓存与当前会话状态
+
+services/framework-agent/   # FastAPI + LangChain + LangGraph + SQLite durable conversation
 
 uniCloud-aliyun/
  ├─ cloudfunctions/
@@ -299,6 +314,7 @@ pnpm run build:mp-weixin
 | rag | `DASHSCOPE_API_KEY`、`LLM_BASE_URL`、`EMBEDDING_MODEL`、`EMBEDDING_DIMENSION`、`RAG_LLM_MODEL` |
 | agent | `DASHSCOPE_API_KEY`、`LLM_BASE_URL`、`AGENT_LLM_MODEL` |
 | framework-gateway | `FRAMEWORK_GATEWAY_SECRET` |
+| WeChat client build | `VITE_FRAMEWORK_AGENT_BASE_URL` |
 
 真实 API Key 只配置在远程环境，不写入源码、日志或 Git。`.env`、`.hbuilderx/`、服务空间绑定文件和云函数 `*.param.json` 均由 Git 忽略。
 
@@ -311,14 +327,16 @@ pnpm run rag:check-source
 git diff --check
 ```
 
-当前回归：**832 项 JavaScript 测试与 197 项 Python 测试通过**。测试覆盖 RAG 索引/检索/生成/评测、Agent Tool 与多步循环、五路显式 LangGraph 路由、多轮上下文化、SQLite 重启恢复、capability token、History API、动作提案、订单预览/创建、幂等并发语义、前端状态以及冻结文件未漂移。
+当前回归：**851 项 JavaScript 测试与 197 项 Python 测试通过**。测试覆盖 RAG 索引/检索/生成/评测、Agent Tool 与多步循环、五路显式 LangGraph 路由、多轮上下文化、SQLite 重启恢复、capability token、History API、微信会话 UI、动作提案、订单预览/创建、幂等并发语义、前端状态以及冻结文件未漂移。
 
 ## Known Limitations / Future Work
 
 - Knowledge Base 只有21条人工审核 chunks；12-query baseline 是项目级小样本评测。
 - RAG 接口本身仍是单轮；Python LangGraph 通过显式 durable conversation 提供受限多轮语义上下文。
 - `AsyncSqliteSaver` 已真实验证同一持久文件系统上的进程重启恢复，但不提供跨机器、多实例或账户级跨设备同步。
-- 当前没有 conversation list、token expiry/rotation/revocation UI、多轮文本确认执行、长期用户画像或 ChatGPT 风格微信前端。
+- V7.3C 微信聊天页面已完成真实验收；当前没有 conversation list、token expiry/rotation/revocation UI、多轮文本确认执行或长期用户画像。
+- History API 只恢复安全文字，旧 `pendingAction` 卡片不会跨页面重进恢复；Markdown-like 内容按安全纯文本展示。
+- Framework Agent 正式部署仍需要 HTTPS 和微信合法 request domain；开发者工具关闭域名校验只用于本地验收。
 - RAG 没有注册成 Agent Tool，两项能力保持独立。
 - 购物车仍在客户端 Pinia；Pending Action 不持久化。
 - 未决 requestId 与 frozen payload 不跨页面刷新或小程序重启恢复。
@@ -351,6 +369,7 @@ Local Ordering
  → V7.2C Native Agent Action Proposal Route
  → V7.3A Thread-aware Multi-turn Backend
  → V7.3B Persistent Conversation + Safe History API
+ → V7.3C WeChat Conversation UI + Explicit Cart Confirmation
 ```
 
 V7.2A、V7.2B、V7.2C 均已完成实现与对应真实验收。V7.3A 在既有五路图上加入可选
@@ -372,11 +391,18 @@ Process 2 使用同一 SQLite 文件、threadId 与 token 继续询问“多少�
 token 返回 `FRAMEWORK_CONVERSATION_ACCESS_DENIED`。这只证明同一持久文件系统上的进程重启
 恢复；conversationToken 不是用户身份或交易授权。
 
+V7.3C 将 durable conversation 接入微信小程序：真实多轮验收依次覆盖实时菜单、价格追问、RAG
+口味追问和柠檬茶 ×2 动作提案。UI 卡片确认后重新读取 uniCloud 菜单、校验价格和状态，再复用
+既有 Pinia `addDish`，购物车最终为 ×2、合计 ¥24；文字“确认”没有再次执行动作，也没有创建
+订单或支付。页面退出重进与 FastAPI 完全重启后均恢复了安全历史；新对话创建新 capability，
+旧会话不删除。CLI 开发产物缺少 HBuilderX uniCloud 运行环境时，实时复核按预期 fail closed；
+改用已关联远程服务空间的 HBuilderX 运行后确认成功。
+
 当前阶段状态：
 
 - V7.3A Thread-aware multi-turn backend：✅
 - V7.3B Persistent conversation + safe History API：✅
-- 下一阶段 V7.3C WeChat ChatGPT-style Chat UI：尚未实现
+- V7.3C WeChat ChatGPT-style conversation UI：✅ 真实微信开发者工具验收完成
 
 完整冻结状态与真实 commit 里程碑见 [Final Summary](docs/FINAL_SUMMARY.md)。
 

@@ -2,7 +2,7 @@
 
 ## 30 秒项目介绍
 
-我用 Vue 3、uni-app、Pinia 和 uniCloud 做了一个微信智能点餐项目。除了菜单、购物车和云端订单闭环，还实现了 Evidence-first RAG、原生 Function Calling Ordering Agent，以及独立的 Python + FastAPI + LangChain + LangGraph 智能路由。模型负责开放式理解、证据或工具选择和动作提案；价格、状态、副作用、订单确认和幂等由服务器与用户确认控制。当前 JS 832 项、Python 182 项自动化测试通过，并完成真实微信端、uniCloud 与 Qwen/LangChain/LangGraph 链路验收。
+我用 Vue 3、uni-app、Pinia 和 uniCloud 做了一个微信智能点餐项目。除了菜单、购物车和云端订单闭环，还实现了 Evidence-first RAG、原生 Function Calling Ordering Agent，以及独立的 Python + FastAPI + LangChain + LangGraph 智能路由。模型负责开放式理解、证据或工具选择和动作提案；价格、状态、副作用、订单确认和幂等由服务器与用户确认控制。当前 JS 851 项、Python 197 项自动化测试通过，并完成真实微信多轮会话、uniCloud 与 Qwen/LangChain/LangGraph 链路验收。
 
 ## 90 秒项目介绍
 
@@ -15,7 +15,8 @@ Ordering Agent 使用原生 Function Calling、Tool Registry、Executor allowlis
 独立的 Python Framework Agent 使用 LangChain `create_agent` 和三个只读 Structured Tools，
 通过 HMAC Gateway 读取相同的真实菜单。最终真实 trace 为
 `search_menu → result(count=0) → list_available_drinks → result`，证明该案例中 Qwen 根据
-Tool Result 做了下一次模型决策；它没有购物车或订单 Tool，也没有接入微信 UI。
+Tool Result 做了下一次模型决策；它没有购物车或订单 Tool。V7.3C 已通过独立 Framework Agent
+service 将五路 LangGraph 接入微信聊天 UI。
 
 V7.2A 在这条链路外增加项目自有的 LangGraph `StateGraph`。LangGraph 负责顶层 state、路由和
 节点流转；进入 `menu_agent` 后，现有 LangChain Agent 继续负责 Qwen Tool Calling、
@@ -42,6 +43,11 @@ V7.3B 使用 `AsyncSqliteSaver` 将显式创建的 durable conversation 保存�
 停止后，Process 2 使用同一文件、threadId 与 capability token 成功恢复柠檬茶上下文；价格仍
 重新查询实时 Tool。threadId 不是秘密，因此创建时另发一次性返回的高熵 token，服务端只保存
 SHA-256 digest 并用 constant-time compare 校验。History API 只投影安全 user/assistant 文本。
+
+V7.3C 将 durable conversation 接入微信小程序。真实连续操作覆盖菜单、价格追问、RAG 口味追问、
+加购提案和动作卡确认；确认时前端重新读取 uniCloud 菜单并调用既有 Pinia mutation，购物车得到
+柠檬茶 ×2、合计 24 元。输入文字“确认”不会再次加购、创建订单或支付。页面重进以及 FastAPI
+完全重启后均恢复了文字历史，新对话则生成新的 capability。
 
 ## 3 分钟项目介绍
 
@@ -81,7 +87,7 @@ Checkout 完全走确定性服务端逻辑，不经过 Qwen。Preview 先校价�
 
 ### 5. 结果和边界
 
-项目完成真实微信端、uniCloud、RAG、Agent、购物车确认、持久化订单和同一持久文件系统的多轮重启恢复验收。当前仍是 21 条知识、12 条问题的小规模系统，没有支付、库存事务、分布式会话存储、长期用户画像或生产规模 Vector DB。
+项目完成真实微信多轮聊天、uniCloud、RAG、Agent、购物车确认、持久化订单和同一持久文件系统的重启恢复验收。当前仍是 21 条知识、12 条问题的小规模系统，没有支付、库存事务、分布式会话存储、长期用户画像或生产规模 Vector DB。
 
 ## 架构讲解顺序
 
@@ -264,6 +270,20 @@ token，只保存 SHA-256 digest，并要求 History/Resume 同时提交 threadI
 当前没有成熟用户身份与 ownership 模型，服务端无法安全判断“哪些会话属于当前用户”。所以
 只提供创建会话、凭 capability 恢复指定会话和读取指定历史，不提供全局 list。
 
+### 35. 为什么 CLI 运行时聊天正常但动作确认失败？
+
+CLI 的 `pnpm run dev:mp-weixin` 产物能访问本地 FastAPI，但没有 HBuilderX 已关联的 uniCloud 运行
+环境。动作确认必须重新读取实时菜单，所以首次返回“暂时无法确认菜品状态”，并且没有信任旧
+`pendingAction` 或修改购物车。这说明实时复核按预期 fail closed。改用 HBuilderX 连接阿里云
+远程服务空间运行后，同一确认流程成功复核并加入柠檬茶 ×2。
+
+### 36. 为什么 UI 确认和聊天文字“确认”权限不同？
+
+动作卡按钮调用经过校验的本地确定性流程：重读菜单、检查状态和价格、再执行 Pinia mutation。
+聊天文字只是新的自然语言 Query，只能进入 LangGraph 安全路由，不能成为交易授权。真实验收中
+UI 确认后购物车是 ×2；随后发送文字“确认”，购物车仍是 ×2。2026-09-28 验收时订单页最新
+可见记录仍为 2026-09-26 16:20 的历史订单，证明没有通过聊天或动作卡创建新订单。
+
 ## 如果再给两周
 
 1. 扩大并版本化独立评测集，加入更多同义问法、困难拒答和回归样本。
@@ -283,6 +303,8 @@ token，只保存 SHA-256 digest，并要求 History/Resume 同时提交 threadI
 - 没有 production-scale Vector DB。
 - LangGraph 已有 `AsyncSqliteSaver`、capability token、受限 history 和上下文化；没有跨机器或
   多实例一致性、账户级跨设备状态、conversation list、token expiry/rotation/revocation、多轮文本
-  确认执行、长期用户画像或前端 ChatGPT 风格聊天 UI。
+  确认执行或长期用户画像。V7.3C 微信聊天 UI 已完成真实验收，旧动作卡不随 History 恢复，
+  Markdown-like 内容仍按安全纯文本展示。
+- Framework Agent 正式部署仍需要 HTTPS 和微信合法 request domain；关闭域名校验仅用于本地开发。
 
 这些边界说明当前工程验证覆盖到哪里，也给出了下一步可以被独立评测的方向。

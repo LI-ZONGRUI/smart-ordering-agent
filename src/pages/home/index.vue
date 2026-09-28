@@ -19,6 +19,12 @@
     </view>
 
     <view class="card">
+      <view class="section-title">AI 点餐助手</view>
+      <text class="muted">连续询问菜单、菜品知识，也可以准备待确认的购物车操作。</text>
+      <button class="primary-button menu-button" @click="goToAssistant">打开 AI 点餐助手</button>
+    </view>
+
+    <view class="card">
       <view class="section-title">智能点餐 Agent</view>
       <text class="muted">查询实时菜单，并在你确认后执行购物车操作。</text>
       <button class="primary-button menu-button" @click="goToAgent">智能点餐 Agent</button>
@@ -32,6 +38,10 @@
 </template>
 
 <script setup>
+function goToAssistant() {
+  uni.navigateTo({ url: '/pages/assistant/index' })
+}
+
 function goToAgent() {
   uni.navigateTo({ url: '/pages/agent/index' })
 }

@@ -224,6 +224,29 @@ persistent mounted file; this design does not claim multi-instance consistency, 
 concurrency safety, cross-device identity, or production high availability. Concurrent writes to
 one conversation are not given application-level merge guarantees in V7.3B.
 
+## V7.3C WeChat conversation client
+
+The WeChat mini-program now uses the durable conversation API through a dedicated frontend service.
+It stores one current `threadId + conversationToken` capability locally, sends the token only in
+`X-Conversation-Token`, restores safe `role/content` history, and offers an explicit new-conversation
+operation. The page does not receive route, resolved query, ToolMessage, reasoning, provider data,
+checkpoint metadata, or raw graph state.
+
+Real WeChat DevTools acceptance covered live menu lookup, contextualized price follow-up, an existing
+RAG taste follow-up, and a validated lemon-tea ×2 action proposal. The proposal was rendered as a
+card. Explicit UI confirmation re-read the uniCloud menu and then reused the existing Pinia cart
+mutation; a typed “确认” remained an ordinary query and caused no cart, order, or payment write.
+
+Leaving and reopening the page restored safe history. Fully stopping and restarting FastAPI with the
+same persistent SQLite file also restored the conversation. A new conversation created a new
+capability without deleting the old SQLite record. History intentionally excludes `pendingAction`,
+so old action cards are session-local UI state and are never reconstructed from assistant text.
+
+The first cart confirmation attempt used a CLI mini-program runtime without HBuilderX's linked
+uniCloud environment. Live menu revalidation failed closed and made no cart change. Running through
+HBuilderX with the remote service space restored the required uniCloud context and confirmation
+succeeded. Production deployment still requires HTTPS and a legal WeChat request domain.
+
 ## Evolution path
 
 ### V7.1B
@@ -275,3 +298,13 @@ one conversation are not given application-level merge guarantees in V7.3B.
 - Keep every side effect behind explicit user confirmation and deterministic transaction code.
 - Real action-proposal and payment-boundary acceptance is complete. The action answer is rendered
   deterministically from validated proposal fields; no graph node executes it.
+
+### V7.3
+
+- **V7.3A:** thread-aware contextualization and five-route multi-turn behavior completed real
+  Qwen/Gateway acceptance.
+- **V7.3B:** token-protected durable conversations, safe History API, and same-filesystem process
+  restart recovery completed real acceptance.
+- **V7.3C:** the WeChat conversation UI, history recovery, new conversation, pending-action card,
+  explicit cart confirmation, and text-confirmation safety boundary completed real DevTools
+  acceptance. LangGraph still never performs cart, order, or payment writes.
