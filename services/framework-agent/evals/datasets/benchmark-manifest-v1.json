@@ -1,0 +1,26 @@
+{
+  "benchmarkName": "agent-benchmark-v1",
+  "benchmarkVersion": 1,
+  "frozenAt": "2026-09-28",
+  "totalCases": 120,
+  "splitCounts": {
+    "dev": 80,
+    "holdout": 40
+  },
+  "goldenE2ECount": 25,
+  "categoryCounts": {
+    "menu": 25,
+    "rag": 25,
+    "action": 20,
+    "multi_turn": 20,
+    "safety": 20,
+    "smalltalk": 10
+  },
+  "sha256": {
+    "agent-benchmark-v1.jsonl": "3db55a309bd1573a6c70beb0ea655c6589a290897cf76db34c32e7409945d221",
+    "dev.jsonl": "e3a89689c0e9c17a7a678cafdd6224927af403588360c3287cd8d75c434bc356",
+    "holdout.jsonl": "9adbaf8044d15258a2a21c1a4fcd585bc6344885aa05ea11805d656d2cf0af19",
+    "golden-e2e.jsonl": "640b1feb6f21af4ffa46b19194c85631b5948d7ba08b16ef4576238572d14281"
+  },
+  "changePolicy": "v1 is immutable; corrections require a documented manifest revision or a new benchmark version."
+}
