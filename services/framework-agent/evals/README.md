@@ -121,10 +121,19 @@ new Hybrid Router uses a separate runner and report so the baseline cannot be ov
 # Rules only; unresolved semantic cases remain N/A
 PYTHONPATH=. .venv/bin/python -m evals.hybrid_router_runner
 
-# Explicit real Qwen classification, still Dev only
+# Explicit real Qwen classification on Dev
 PYTHONPATH=. .venv/bin/python -m evals.hybrid_router_runner \
   --live-model --confirm-live
+
+# Frozen Holdout: both Holdout access and the real model require separate confirmation
+PYTHONPATH=. .venv/bin/python -m evals.hybrid_router_runner \
+  --split holdout --confirm-holdout \
+  --live-model --confirm-live \
+  --report evals/reports/hybrid-router-holdout-live-v1.md
 ```
 
-The Hybrid runner has no Holdout option. Its live mode calls only the Qwen classifier for unresolved
-queries; it does not call Gateway, uniCloud, Tools, RAG, or a database.
+The default remains the 80-case Dev split. The frozen 40-case Holdout cannot run without
+`--confirm-holdout`; live Qwen classification independently requires `--live-model --confirm-live`.
+Dev and Holdout share the same Hybrid Router, validators, metrics, and report implementation. Live
+mode calls Qwen only for queries unresolved by deterministic rules; it does not call Gateway,
+uniCloud, Tools, RAG, or a database.

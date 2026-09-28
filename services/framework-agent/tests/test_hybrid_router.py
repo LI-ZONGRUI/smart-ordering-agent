@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import copy
 import logging
 from pathlib import Path
 
@@ -16,8 +17,14 @@ from app.graph.router import (
     build_route_request_node,
     classify_high_confidence,
 )
-from evals.hybrid_router_runner import run_offline
-from evals.schema import DATASET_DIR, load_jsonl
+from evals.hybrid_router_runner import (
+    default_report_path,
+    load_split,
+    parse_args,
+    run_offline,
+    validate_options,
+)
+from evals.schema import DATASET_DIR, load_jsonl, sha256_file, verify_frozen_artifacts
 
 
 class RecordingSemanticClassifier:
@@ -297,11 +304,134 @@ def test_offline_hybrid_report_uses_only_dev_and_keeps_semantic_cases_na() -> No
     assert "No Qwen, Gateway, uniCloud, RAG, Tool, or database request was made" in report
 
 
-def test_hybrid_runner_requires_live_double_opt_in_and_has_no_holdout_access() -> None:
-    source = Path("evals/hybrid_router_runner.py").read_text(encoding="utf-8")
+def test_hybrid_runner_default_split_is_dev() -> None:
+    args = parse_args([])
 
-    assert '"--live-model"' in source
-    assert '"--confirm-live"' in source
-    assert "--live-model requires --confirm-live" in source
-    assert 'DATASET_DIR / "dev.jsonl"' in source
-    assert 'DATASET_DIR / "holdout.jsonl"' not in source
+    assert args.split == "dev"
+    assert args.confirm_holdout is False
+    assert args.live_model is False
+
+
+def test_hybrid_runner_accepts_explicit_dev_without_holdout_confirmation() -> None:
+    args = parse_args(["--split", "dev"])
+
+    validate_options(args)
+    assert args.split == "dev"
+
+
+def test_hybrid_runner_rejects_holdout_without_explicit_confirmation() -> None:
+    args = parse_args(["--split", "holdout"])
+
+    with pytest.raises(SystemExit, match="Holdout is frozen and requires explicit confirmation"):
+        validate_options(args)
+
+
+def test_hybrid_runner_accepts_confirmed_holdout_without_live_model() -> None:
+    args = parse_args(["--split", "holdout", "--confirm-holdout"])
+
+    validate_options(args)
+    assert args.split == "holdout"
+    assert args.live_model is False
+
+
+def test_hybrid_runner_rejects_live_model_without_live_confirmation() -> None:
+    args = parse_args(["--live-model"])
+
+    with pytest.raises(SystemExit, match="--live-model requires --confirm-live"):
+        validate_options(args)
+
+
+@pytest.mark.parametrize(
+    "arguments, message",
+    [
+        (
+            ["--split", "holdout", "--live-model", "--confirm-live"],
+            "Holdout is frozen and requires explicit confirmation",
+        ),
+        (
+            ["--split", "holdout", "--confirm-holdout", "--live-model"],
+            "--live-model requires --confirm-live",
+        ),
+    ],
+)
+def test_hybrid_runner_holdout_live_requires_both_confirmations(
+    arguments: list[str], message: str
+) -> None:
+    with pytest.raises(SystemExit, match=message):
+        validate_options(parse_args(arguments))
+
+    validate_options(
+        parse_args(
+            [
+                "--split",
+                "holdout",
+                "--confirm-holdout",
+                "--live-model",
+                "--confirm-live",
+            ]
+        )
+    )
+
+
+def test_hybrid_runner_loads_expected_split_counts_without_printing_cases() -> None:
+    assert len(load_split("dev")) == 80
+    assert len(load_split("holdout")) == 40
+
+
+def test_hybrid_runner_does_not_modify_frozen_dataset() -> None:
+    manifest = verify_frozen_artifacts()
+    before = {filename: sha256_file(DATASET_DIR / filename) for filename in manifest["sha256"]}
+
+    load_split("dev")
+    load_split("holdout")
+
+    after = {filename: sha256_file(DATASET_DIR / filename) for filename in manifest["sha256"]}
+    assert after == before == manifest["sha256"]
+
+
+def test_dev_and_holdout_use_the_same_router_implementation(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    source_case = load_split("dev")[0]
+    dev_case = copy.deepcopy(source_case)
+    holdout_case = copy.deepcopy(source_case)
+    holdout_case["split"] = "holdout"
+    calls: list[str] = []
+
+    def fake_classifier(query: str) -> str:
+        calls.append(query)
+        return source_case["expected"]["allowedRoutes"][0]
+
+    monkeypatch.setattr("evals.hybrid_router_runner.classify_high_confidence", fake_classifier)
+
+    run_offline([dev_case], split="dev")
+    run_offline([holdout_case], split="holdout")
+
+    assert calls == [_router_query(source_case), _router_query(source_case)]
+
+
+def _router_query(case: dict[str, object]) -> str:
+    expected = case["expected"]
+    input_value = case["input"]
+    assert isinstance(expected, dict)
+    assert isinstance(input_value, dict)
+    resolved = expected["expectedResolvedQuery"]
+    query = input_value["query"]
+    assert resolved is None or isinstance(resolved, str)
+    assert isinstance(query, str)
+    return resolved or query
+
+
+def test_hybrid_report_marks_selected_split_and_default_paths() -> None:
+    case = copy.deepcopy(load_split("dev")[0])
+    case["split"] = "holdout"
+    report = run_offline([case], split="holdout")
+
+    assert "Dev / Holdout: 0 / 1" in report
+    assert "Split: `holdout`" in report
+    assert "Mode: `hybrid-router-holdout-deterministic-only`" in report
+    assert default_report_path(split="dev", live_model=False).name == "hybrid-router-dev-v1.md"
+    assert (
+        default_report_path(split="holdout", live_model=True).name
+        == "hybrid-router-holdout-live-v1.md"
+    )
