@@ -21,7 +21,12 @@ from app.graph.nodes import (
     readonly_boundary,
     smalltalk_response,
 )
-from app.graph.router import route_request, select_route
+from app.graph.router import (
+    HybridRouter,
+    SemanticRouteClassifier,
+    build_route_request_node,
+    select_route,
+)
 from app.graph.state import FrameworkGraphState
 
 
@@ -32,12 +37,13 @@ def build_framework_graph(
     contextualizer: QueryContextualizer,
     *,
     checkpointer: BaseCheckpointSaver | None = None,
+    semantic_router: SemanticRouteClassifier | None = None,
 ) -> CompiledStateGraph:
     """Compile the project-owned conditional graph around the existing LangChain Agent."""
 
     builder = StateGraph(FrameworkGraphState)
     builder.add_node("contextualize_query", build_contextualize_query_node(contextualizer))
-    builder.add_node("route_request", route_request)
+    builder.add_node("route_request", build_route_request_node(HybridRouter(semantic_router)))
     builder.add_node("menu_agent", build_menu_agent_node(agent))
     builder.add_node("rag_node", build_rag_node(rag_gateway))
     builder.add_node("native_action_node", build_native_action_node(action_gateway))
@@ -104,14 +110,22 @@ def build_framework_workflow(
     contextualizer: QueryContextualizer,
     *,
     checkpointer: BaseCheckpointSaver,
+    semantic_router: SemanticRouteClassifier | None = None,
 ) -> FrameworkWorkflow:
     return FrameworkWorkflow(
-        graph=build_framework_graph(agent, rag_gateway, action_gateway, contextualizer),
+        graph=build_framework_graph(
+            agent,
+            rag_gateway,
+            action_gateway,
+            contextualizer,
+            semantic_router=semantic_router,
+        ),
         threaded_graph=build_framework_graph(
             agent,
             rag_gateway,
             action_gateway,
             contextualizer,
             checkpointer=checkpointer,
+            semantic_router=semantic_router,
         ),
     )

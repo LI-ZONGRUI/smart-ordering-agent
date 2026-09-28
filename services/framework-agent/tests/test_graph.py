@@ -403,6 +403,7 @@ async def test_gateway_closes_if_workflow_construction_fails(
     monkeypatch.setattr(
         main_module, "build_production_contextualizer", lambda _settings: StubContextualizer()
     )
+    monkeypatch.setattr(main_module, "build_production_semantic_router", lambda _settings: None)
 
     def fail_workflow(*_args: object, **_kwargs: object) -> FrameworkWorkflow:
         raise RuntimeError("construction failure")
@@ -439,6 +440,7 @@ async def test_non_menu_routes_close_owned_gateway_without_calling_menu_agent(
     monkeypatch.setattr(
         main_module, "build_production_contextualizer", lambda _settings: StubContextualizer()
     )
+    monkeypatch.setattr(main_module, "build_production_semantic_router", lambda _settings: None)
 
     runner = await main_module.get_agent_runner()
     result = await runner(query)
@@ -469,6 +471,7 @@ async def test_main_runner_routes_knowledge_to_same_authenticated_gateway(
     monkeypatch.setattr(
         main_module, "build_production_contextualizer", lambda _settings: StubContextualizer()
     )
+    monkeypatch.setattr(main_module, "build_production_semantic_router", lambda _settings: None)
 
     runner = await main_module.get_agent_runner()
     result = await runner("柠檬茶是什么味道？")
@@ -500,6 +503,7 @@ async def test_main_runner_routes_action_to_same_authenticated_gateway(
     monkeypatch.setattr(
         main_module, "build_production_contextualizer", lambda _settings: StubContextualizer()
     )
+    monkeypatch.setattr(main_module, "build_production_semantic_router", lambda _settings: None)
 
     runner = await main_module.get_agent_runner()
     result = await runner("把柠檬茶加两杯到购物车")

@@ -27,6 +27,13 @@ Contextualizer 增加短期多轮语义上下文；V7.3B 再以 `AsyncSqliteSave
 和安全 History API 实现同一持久文件系统上的进程重启恢复。V7.3C 已将该链路接入微信聊天页，
 并通过显式 UI 确认调用既有确定性购物车路径。该能力不改变交易职责边界。
 
+在 Agent Benchmark V1 的 68/80 Rule Router Dev 基线之后，顶层路由改为 Hybrid Router：
+`Deterministic Safety Rules → High-confidence Business Rules → Qwen Semantic Fallback`。下单、
+支付、退款、破坏性购物车操作、绕过确认和内部 Tool 请求始终先由确定性规则拦截；价格、状态、
+明确加购、知识意图和常见闲聊也不消耗模型。只有规则无法高置信度判断时，才使用现有
+ChatOpenAI/Qwen 配置返回一个严格 allowlist route。模型失败或输出无效时安全回退到只读
+`menu_query`，并只记录无敏感内容的内部失败类别。
+
 V7.1B-1 已把 Native Agent 的三个只读菜单能力抽取到 uniCloud Shared Menu Domain，并让
 Native Agent 与经过 HMAC-SHA256 认证的 URL 化 Framework Gateway 复用同一实现。Shared
 Domain、Gateway 和真实 uniCloud 菜单读取均已完成云端验收。V7.1B-2 已在 Python 服务中
@@ -62,13 +69,14 @@ graph TB
     MEM[InMemorySaver<br/>Legacy Ephemeral Thread]
     DUR[AsyncSqliteSaver<br/>Durable Conversation]
     CTX[Qwen Contextualizer<br/>standalone query]
+    HR[Hybrid Router<br/>Rules + Qwen fallback]
     LG[LangGraph StateGraph<br/>Five-route Routing]
     LC[LangChain create_agent]
     GW[MenuGateway Port]
     RGW[RagGateway Port]
     AGW[ActionGateway Port]
     SMALL[Smalltalk / Read-only Boundary]
-    FASTAPI --> CTX --> LG
+    FASTAPI --> CTX --> HR --> LG
     MEM -. threaded checkpoint .-> LG
     DUR -. token-protected checkpoint .-> LG
     LG --> LC --> GW

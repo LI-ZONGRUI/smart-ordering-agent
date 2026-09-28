@@ -137,6 +137,33 @@ The committed Dev offline baseline reports only fields that Level 1 actually obs
 is useful for surfacing dataset/Router disagreements, while Tool, Qwen, Contextualizer, RAG and
 side-effect metrics remain `N/A`. It is not a fabricated cloud score.
 
+## Hybrid Router comparison
+
+The frozen pre-change Rule Router baseline remains in `offline-dev-baseline-v1.md`: 68/80 Dev
+routes, or 85%. It is historical evidence and is not overwritten.
+
+The Hybrid Router applies these layers in order:
+
+1. Deterministic safety rules for unsupported writes, bypass requests and internal Tool requests.
+2. High-confidence price/status, proposal, knowledge and smalltalk intent rules.
+3. A strict Qwen semantic fallback only when the deterministic layer returns unresolved.
+
+The deterministic layer does not use a bare `辣` marker, so a dish name cannot override an explicit
+price phrase. Stable `口感 / 组成 / 怎么描述 / 如何描述` semantics route to RAG; invalid quantities
+remain action intent and are rejected by the existing downstream validation rather than disguised as
+menu queries. Semantic output accepts only one of the five existing routes through the same verified
+normalized Tool Call, raw OpenAI Tool Call, or strict JSON compatibility pattern used by the
+Contextualizer. Invalid output and provider failure fall back to read-only `menu_query` without
+exposing provider data.
+
+`hybrid-router-dev-v1.md` is a deterministic-only report. It reports Route Accuracy only for cases
+resolved by high-confidence rules and leaves semantic cases `N/A`; it is not a real Qwen score. A
+separate explicit live command evaluates the 80-case Dev split. Neither path reads Holdout.
+
+The current offline result resolves 74/80 Dev cases deterministically and matches 74/74 of those
+labels. Six cases require the semantic classifier and remain `N/A`, so this result must not be
+reported as 100% Hybrid Router Dev accuracy. The frozen Rule Router comparison remains 68/80.
+
 ## Running
 
 See `services/framework-agent/evals/README.md` for exact commands. The normal command is fully
@@ -150,6 +177,17 @@ PYTHONPATH=. .venv/bin/python -m evals.runner
 The Golden command requires both `--live-model` and `--confirm-live`, a separately started service,
 and ignored local environment configuration. Never commit its capability tokens, signatures,
 nonces, raw responses, private URLs, or secrets.
+
+Hybrid Router commands are separate from the full Golden E2E runner:
+
+```bash
+# Fully offline, Dev only
+PYTHONPATH=. .venv/bin/python -m evals.hybrid_router_runner
+
+# Explicit Qwen routing for unresolved Dev cases; no Gateway or uniCloud call
+PYTHONPATH=. .venv/bin/python -m evals.hybrid_router_runner \
+  --live-model --confirm-live
+```
 
 ## Limitations
 

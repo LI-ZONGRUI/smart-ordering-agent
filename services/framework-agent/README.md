@@ -296,10 +296,11 @@ START
 
 `FrameworkGraphState` contains the original `query`, internal `resolved_query`, bounded `messages`,
 `route`, `answer`, `completed` and an optional strict `pendingAction`. It does not store keys,
-Gateway secrets, prompts, model reasoning, raw model
-responses or Tool messages. The deterministic router sends a small set of add-to-cart proposal
-phrases to `action_query`; order, payment, refund, confirmation and destructive cart requests stay
-in `unsupported_action`. This is an orchestration foundation, not a complete NLU classifier.
+Gateway secrets, prompts, model reasoning, raw model responses or Tool messages. The Hybrid Router
+first applies deterministic safety and high-confidence business rules. Only unresolved standalone
+queries reach a strict Qwen route classifier; invalid output or provider failure falls back to
+read-only `menu_query`. The classifier can only select an existing route and has no Tool, Gateway,
+cart, order or payment authority.
 
 For a validated add-to-cart proposal, `native_action_node` does not expose the Native Agent's free
 answer. It deterministically renders the dish name, quantity, unit price and total from

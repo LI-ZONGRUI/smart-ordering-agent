@@ -20,7 +20,8 @@ from evals.report import render_report
 from evals.schema import DATASET_DIR, load_benchmark, load_jsonl, verify_frozen_artifacts
 from evals.validators import evaluate_case
 
-DEFAULT_REPORT = Path(__file__).resolve().parent / "reports" / "offline-dev-baseline-v1.md"
+# The committed v1 baseline is historical evidence. Current runs must never overwrite it.
+DEFAULT_REPORT = Path(__file__).resolve().parent / "reports" / "deterministic-dev-current.md"
 
 
 def _offline_observation(case: dict[str, Any]) -> dict[str, Any]:

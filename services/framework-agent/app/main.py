@@ -28,6 +28,7 @@ from app.errors import (
 )
 from app.gateways.unicloud_http import build_menu_gateway
 from app.graph import build_framework_workflow
+from app.graph.router import build_production_semantic_router
 from app.models import (
     AgentRunRequest,
     AgentRunResponse,
@@ -49,6 +50,7 @@ async def get_agent_runner() -> AgentRunner:
     try:
         agent = build_production_agent(gateway)
         contextualizer = build_production_contextualizer(settings)
+        semantic_router = build_production_semantic_router(settings)
         # 同一个认证HTTP适配器承载菜单、RAG与只读动作提案，复用HMAC和连接生命周期。
         ephemeral_workflow = build_framework_workflow(
             agent,
@@ -56,6 +58,7 @@ async def get_agent_runner() -> AgentRunner:
             gateway,
             contextualizer,
             checkpointer=app.state.conversation_checkpointer,
+            semantic_router=semantic_router,
         )
         durable_workflow = None
         if app.state.durable_conversation_store is not None:
@@ -65,6 +68,7 @@ async def get_agent_runner() -> AgentRunner:
                 gateway,
                 contextualizer,
                 checkpointer=app.state.durable_conversation_store.saver,
+                semantic_router=semantic_router,
             )
     except Exception:
         await gateway.aclose()

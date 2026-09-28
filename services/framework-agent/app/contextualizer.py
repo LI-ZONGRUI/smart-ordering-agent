@@ -1,9 +1,8 @@
 """Narrow conversation contextualization without answering or executing tools."""
 
-import json
 import re
 from dataclasses import dataclass, replace
-from typing import Any, Protocol
+from typing import Protocol
 
 import httpx
 import openai
@@ -13,6 +12,7 @@ from langchain_core.messages import AIMessage, BaseMessage, HumanMessage, System
 from app.config import FrameworkSettings
 from app.errors import FrameworkError, context_failed
 from app.llm import build_qwen_model
+from app.structured_output import StrictStructuredOutputError, parse_strict_structured_payload
 
 CONTEXTUALIZER_SYSTEM_PROMPT = """You rewrite a context-dependent user message as a standalone
 query.
@@ -157,75 +157,19 @@ def _validate_standalone_args(
     )
 
 
-def _parse_normalized_tool_call(
-    tool_calls: list[dict[str, Any]], diagnostics: ContextualizerDiagnostics
-) -> tuple[str, ContextualizerDiagnostics]:
-    if len(tool_calls) != 1:
-        _fail(diagnostics, stage="response_parse", exception_type="tool_call_count_invalid")
-    tool_call = tool_calls[0]
-    if tool_call.get("name") != "return_standalone_query":
-        _fail(diagnostics, stage="response_parse", exception_type="tool_name_invalid")
-    return _validate_standalone_args(
-        tool_call.get("args"), diagnostics, parse_source="normalized_tool_call"
-    )
-
-
-def _parse_raw_tool_call(
-    raw_calls: list[object], diagnostics: ContextualizerDiagnostics
-) -> tuple[str, ContextualizerDiagnostics]:
-    if len(raw_calls) != 1 or not isinstance(raw_calls[0], dict):
-        _fail(diagnostics, stage="response_parse", exception_type="tool_call_count_invalid")
-    function = raw_calls[0].get("function")
-    if not isinstance(function, dict) or function.get("name") != "return_standalone_query":
-        _fail(diagnostics, stage="response_parse", exception_type="tool_name_invalid")
-    arguments = function.get("arguments")
-    if isinstance(arguments, str):
-        try:
-            arguments = json.loads(arguments)
-        except (TypeError, ValueError):
-            _fail(diagnostics, stage="response_parse", exception_type="tool_arguments_invalid")
-    return _validate_standalone_args(arguments, diagnostics, parse_source="raw_openai_tool_call")
-
-
-def _parse_json_content(
-    content: object, diagnostics: ContextualizerDiagnostics
-) -> tuple[str, ContextualizerDiagnostics]:
-    # 部分OpenAI-compatible实现未填充LangChain的tool_calls，但会返回严格JSON正文。
-    # 这里只接受完全相同的窄schema，不接受自然语言或Markdown代码块。
-    if not isinstance(content, str):
-        _fail(diagnostics, stage="response_parse", exception_type="content_shape_invalid")
-    try:
-        payload = json.loads(content)
-    except (TypeError, ValueError):
-        _fail(diagnostics, stage="response_parse", exception_type="content_json_invalid")
-    return _validate_standalone_args(payload, diagnostics, parse_source="strict_json_content")
-
-
 def parse_contextualizer_response(
     response: object,
 ) -> tuple[str, ContextualizerDiagnostics]:
     """Parse only allowlisted OpenAI-compatible shapes under the same strict schema."""
 
     diagnostics = _response_diagnostics(response)
-    if not isinstance(response, AIMessage):
-        _fail(diagnostics, stage="response_parse", exception_type="response_type_invalid")
-
-    if response.tool_calls:
-        return _parse_normalized_tool_call(response.tool_calls, diagnostics)
-
-    # LangChain records malformed provider Tool arguments here. Do not bypass them by accepting a
-    # different field from the same response.
-    if response.invalid_tool_calls:
-        _fail(diagnostics, stage="response_parse", exception_type="tool_arguments_invalid")
-
-    raw_calls = response.additional_kwargs.get("tool_calls")
-    if isinstance(raw_calls, list) and raw_calls:
-        return _parse_raw_tool_call(raw_calls, diagnostics)
-
-    if diagnostics.content_existed:
-        return _parse_json_content(response.content, diagnostics)
-
-    _fail(diagnostics, stage="response_parse", exception_type="structured_output_missing")
+    try:
+        payload, parse_source = parse_strict_structured_payload(
+            response, tool_name="return_standalone_query"
+        )
+    except StrictStructuredOutputError as error:
+        _fail(diagnostics, stage="response_parse", exception_type=error.code)
+    return _validate_standalone_args(payload, diagnostics, parse_source=parse_source)
 
 
 class QwenQueryContextualizer:

@@ -327,12 +327,12 @@ pnpm run rag:check-source
 git diff --check
 ```
 
-当前回归：**851 项 JavaScript 测试与 228 项 Python 测试通过**。测试覆盖 RAG 索引/检索/生成/评测、Agent Tool 与多步循环、五路显式 LangGraph 路由、多轮上下文化、SQLite 重启恢复、capability token、History API、微信会话 UI、动作提案、订单预览/创建、幂等并发语义、Agent Benchmark 自检、前端状态以及冻结文件未漂移。
+当前回归：**851 项 JavaScript 测试与 275 项 Python 测试通过**。测试覆盖 RAG 索引/检索/生成/评测、Agent Tool 与多步循环、五路显式 LangGraph 路由、Hybrid Router、多轮上下文化、SQLite 重启恢复、capability token、History API、微信会话 UI、动作提案、订单预览/创建、幂等并发语义、Agent Benchmark 自检、前端状态以及冻结文件未漂移。
 
 项目另提供独立的 [Agent Benchmark V1](docs/framework/AGENT_BENCHMARK.md)：120 条固定案例分为
 80 Dev / 40 冻结 Holdout，并选取 25 条 Golden E2E。默认 Runner 完全离线，只报告实际观察到的
-确定性指标；真实 Qwen/Gateway/uniCloud 评测必须使用双重显式 live 开关。本阶段尚未运行真实
-Golden E2E，未据 Benchmark 调整任何生产 Prompt 或路由。
+确定性指标；真实 Qwen/Gateway/uniCloud 评测必须使用双重显式 live 开关。Rule Router 的
+68/80 Dev 基线已用于设计安全优先的 Hybrid Router，但尚未运行真实 Qwen Dev 或 Golden E2E。
 
 ## Known Limitations / Future Work
 

@@ -111,3 +111,20 @@ V1 is frozen by `benchmark-manifest-v1.json`. Do not silently edit Dev or Holdou
 correction requires an explicit manifest revision and changelog entry; semantic expansion should
 create V2. The full Holdout answer key must not be copied into README, prompts, or Tool descriptions.
 The default Runner selects only Dev; Holdout or all-case evaluation requires `--confirm-holdout`.
+
+## Hybrid Router Dev comparison
+
+The historical `offline-dev-baseline-v1.md` remains the pre-change Rule Router result: 68/80. The
+new Hybrid Router uses a separate runner and report so the baseline cannot be overwritten:
+
+```bash
+# Rules only; unresolved semantic cases remain N/A
+PYTHONPATH=. .venv/bin/python -m evals.hybrid_router_runner
+
+# Explicit real Qwen classification, still Dev only
+PYTHONPATH=. .venv/bin/python -m evals.hybrid_router_runner \
+  --live-model --confirm-live
+```
+
+The Hybrid runner has no Holdout option. Its live mode calls only the Qwen classifier for unresolved
+queries; it does not call Gateway, uniCloud, Tools, RAG, or a database.
