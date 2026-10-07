@@ -4,6 +4,10 @@
 It does not replace the legacy 12-case RAG evaluation and does not change production prompts,
 routing, Tools, RAG, actions, or transactions.
 
+The independent Contextualizer suite is under `evals/contextualizer/`. It evaluates history-aware
+standalone-query resolution and keeps its datasets, metrics, failures, runner, and frozen Holdout
+separate from Router Multi-turn Route Accuracy. See `evals/contextualizer/README.md`.
+
 ## Layout
 
 ```text

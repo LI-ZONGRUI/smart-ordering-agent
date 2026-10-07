@@ -574,3 +574,19 @@ identify the item rather than inheriting the other thread's lemon-tea context. A
 conversation state isolation, not user authorization. The graph can explicitly clear an old
 `pendingAction`; a checkpointed proposal is display state, not an execution token or confirmation
 credential.
+
+### Independent Contextualizer Benchmark v1
+
+`evals/contextualizer/` now contains a separate 40-case Contextualizer benchmark, deterministic
+validators, metrics, report renderer, offline-first runner, and a SHA-256-frozen 30 Dev / 10 Holdout
+split. It evaluates `history + current query → standaloneQuery`; it does not reuse Router
+Multi-turn Route Accuracy as Context Resolution Accuracy. The default command is network-free and
+does not construct Qwen:
+
+```bash
+PYTHONPATH=. .venv/bin/python -m evals.contextualizer.runner
+```
+
+The first real Dev baseline remains a future explicit `--live-model --confirm-live` run. Holdout
+also requires `--confirm-holdout`. See `evals/contextualizer/README.md` and
+`docs/framework/CONTEXTUALIZER_BENCHMARK.md` for the frozen contract and limitations.

@@ -1,0 +1,25 @@
+{
+  "benchmarkName": "contextualizer-benchmark-v1",
+  "benchmarkVersion": 1,
+  "categoryCounts": {
+    "action_continuation": 5,
+    "already_standalone": 4,
+    "entity_ellipsis": 6,
+    "entity_switch": 5,
+    "multi_entity_ambiguity": 4,
+    "no_history_ambiguity": 5,
+    "pronoun_reference": 6,
+    "user_correction": 5
+  },
+  "frozenAt": "2026-10-07",
+  "sha256": {
+    "contextualizer-benchmark-v1.jsonl": "6a66b9f461597d0af9b9609bcb6b41516721245b4d204e3c63d157dc4f15f7ae",
+    "dev.jsonl": "cde27fabbd1456e59bb910a62be28ef0679b7d94a6a722c451b7d56dd780a15b",
+    "holdout.jsonl": "67a7afe49b8f6d697b79b5152317754a7031eb9986d04188277cd3f0fee18142"
+  },
+  "splitCounts": {
+    "dev": 30,
+    "holdout": 10
+  },
+  "totalCases": 40
+}
