@@ -125,6 +125,11 @@ def test_production_path_requires_real_gateway_and_never_falls_back_to_fixture(
     monkeypatch.setenv("DASHSCOPE_API_KEY", "test-placeholder-only")
     monkeypatch.setenv("LLM_BASE_URL", "https://example.test/compatible-mode/v1")
     monkeypatch.setenv("FRAMEWORK_AGENT_LLM_MODEL", "qwen3.8-flash")
+    # A missing process variable would be repopulated from the developer's local .env file.
+    # Empty process values take precedence over dotenv and create the intended no-Gateway state.
+    for name in ("FRAMEWORK_GATEWAY_URL", "FRAMEWORK_GATEWAY_SECRET"):
+        monkeypatch.delenv(name, raising=False)
+        monkeypatch.setenv(name, "")
     get_settings.cache_clear()
 
     response = client.post("/v1/agent/run", json={"query": "有柠檬茶吗？"})
