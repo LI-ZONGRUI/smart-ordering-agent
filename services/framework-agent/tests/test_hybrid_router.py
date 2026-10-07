@@ -18,9 +18,11 @@ from app.graph.router import (
     classify_high_confidence,
 )
 from evals.hybrid_router_runner import (
+    _render,
     default_report_path,
     load_split,
     parse_args,
+    run_live,
     run_offline,
     validate_options,
 )
@@ -435,3 +437,87 @@ def test_hybrid_report_marks_selected_split_and_default_paths() -> None:
         default_report_path(split="holdout", live_model=True).name
         == "hybrid-router-holdout-live-v1.md"
     )
+
+
+def _route_failure_case() -> dict[str, object]:
+    case = copy.deepcopy(load_split("dev")[0])
+    case["input"]["query"] = "帮我想一想"
+    case["expected"]["expectedResolvedQuery"] = None
+    case["expected"]["allowedRoutes"] = ["knowledge_query"]
+    return case
+
+
+def test_offline_failure_report_records_only_safe_route_metadata() -> None:
+    case = _route_failure_case()
+    case["input"]["query"] = "柠檬茶现在多少钱？"
+    report = run_offline([case])
+
+    assert (
+        f"| {case['id']} | {case['category']} | knowledge_query | menu_query | "
+        "deterministic | ROUTER_MISCLASSIFICATION |"
+    ) in report
+    assert "柠檬茶现在多少钱？" not in report
+
+
+@pytest.mark.asyncio
+async def test_live_semantic_failure_report_records_actual_route_and_source(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    case = _route_failure_case()
+    classifier = RecordingSemanticClassifier("smalltalk")
+    monkeypatch.setattr(
+        "evals.hybrid_router_runner.build_production_semantic_router", lambda: classifier
+    )
+
+    report = await run_live([case])
+
+    assert classifier.queries == ["帮我想一想"]
+    assert (
+        f"| {case['id']} | {case['category']} | knowledge_query | smalltalk | "
+        "semantic | ROUTER_MISCLASSIFICATION |"
+    ) in report
+
+
+@pytest.mark.asyncio
+async def test_live_fallback_is_observed_without_provider_detail(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    case = _route_failure_case()
+    private_detail = "private-provider-response"
+    classifier = RecordingSemanticClassifier(error=RuntimeError(private_detail))
+    monkeypatch.setattr(
+        "evals.hybrid_router_runner.build_production_semantic_router", lambda: classifier
+    )
+
+    report = await run_live([case])
+
+    assert (
+        f"| {case['id']} | {case['category']} | knowledge_query | menu_query | "
+        "fallback | ROUTER_MISCLASSIFICATION |"
+    ) in report
+    assert private_detail not in report
+
+
+def test_failure_report_does_not_serialize_untrusted_observation_fields() -> None:
+    case = _route_failure_case()
+    report = _render(
+        [case],
+        [
+            {
+                "id": case["id"],
+                "route": "smalltalk",
+                "routing_source": "semantic",
+                "rawResponse": "private-provider-response",
+                "reasoning_content": "private-provider-reasoning",
+                "conversationToken": "private-token",
+            }
+        ],
+        split="dev",
+        mode="test",
+        note="fixture",
+    )
+
+    assert "smalltalk | semantic | ROUTER_MISCLASSIFICATION" in report
+    assert "private-provider-response" not in report
+    assert "private-provider-reasoning" not in report
+    assert "private-token" not in report

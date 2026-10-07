@@ -158,11 +158,22 @@ exposing provider data.
 
 `hybrid-router-dev-v1.md` is a deterministic-only report. It reports Route Accuracy only for cases
 resolved by high-confidence rules and leaves semantic cases `N/A`; it is not a real Qwen score. A
-separate explicit live command evaluates the 80-case Dev split. Neither path reads Holdout.
+separate explicit live command evaluates the 80-case Dev split. Holdout v1 requires explicit split
+and confirmation flags. Future Hybrid reports record the actual route and routing source for each
+failure using only case ID, category, allowed routes, actual route and failure taxonomy; they do
+not serialize queries, history, provider responses or internal state.
 
 The current offline result resolves 74/80 Dev cases deterministically and matches 74/74 of those
 labels. Six cases require the semantic classifier and remain `N/A`, so this result must not be
 reported as 100% Hybrid Router Dev accuracy. The frozen Rule Router comparison remains 68/80.
+
+The real Hybrid Router Dev result was 80/80. The first frozen Holdout v1 result was 33/40
+(82.50%). Its seven failures were reviewed after the run. That made v1 a regression and failure-
+analysis set; it cannot be presented again as a fully unseen final test. The separate route-only
+Holdout v2 was created and SHA-256 frozen before any Router v2 production implementation. It has
+not been evaluated or wired into the current runner. See `ROUTING_CONTRACT.md` for route ownership
+and the separation between routing and execution authorization. Router evaluation receives the
+post-contextualization query and does not measure Context Resolution Accuracy.
 
 ## Running
 

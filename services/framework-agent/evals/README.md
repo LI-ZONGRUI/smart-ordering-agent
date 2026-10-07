@@ -137,3 +137,11 @@ The default remains the 80-case Dev split. The frozen 40-case Holdout cannot run
 Dev and Holdout share the same Hybrid Router, validators, metrics, and report implementation. Live
 mode calls Qwen only for queries unresolved by deterministic rules; it does not call Gateway,
 uniCloud, Tools, RAG, or a database.
+
+Holdout v1 has already been evaluated and analyzed; it is now a regression/failure-analysis set.
+The independent `holdout-v2.jsonl` is a 40-case route-only set frozen by
+`holdout-v2-manifest.json` before Router v2 implementation. The current runner does not select v2,
+and v2 must not be inspected or run during Router development. New Hybrid reports include a failure
+table containing only case ID, category, allowed routes, actual route, routing source
+(`deterministic`, `semantic` or `fallback`) and failure taxonomy. Neither raw model output nor
+user query/history is written to that table.

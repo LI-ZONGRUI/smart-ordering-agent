@@ -10,9 +10,11 @@ from typing import Any
 
 from app.graph.router import (
     HybridRouter,
+    SemanticRouteClassifier,
     build_production_semantic_router,
     classify_high_confidence,
 )
+from app.graph.state import FRAMEWORK_ROUTES, FrameworkRoute
 from evals.metrics import aggregate_metrics
 from evals.report import render_report
 from evals.schema import (
@@ -44,7 +46,10 @@ def _render(
     note: str,
 ) -> str:
     results = [
-        evaluate_case(case, observation)
+        evaluate_case(
+            case,
+            {key: observation[key] for key in ("id", "route") if key in observation},
+        )
         for case, observation in zip(cases, observations, strict=True)
     ]
     body = render_report(
@@ -56,7 +61,65 @@ def _render(
             f"{split.capitalize()} labels only; Router receives the post-contextualization query"
         ),
     )
-    return "\n".join((body, "## Hybrid Router coverage", "", f"- Split: `{split}`", note, ""))
+    # Only enumerated route metadata enters the diagnostic report. Queries, histories, provider
+    # responses, prompts and exceptions are never serialized here.
+    failure_rows = []
+    for case, observation, result in zip(cases, observations, results, strict=True):
+        if not result["failures"]:
+            continue
+        actual = observation.get("route")
+        actual_route = actual if isinstance(actual, str) and actual in FRAMEWORK_ROUTES else "N/A"
+        source = observation.get("routing_source")
+        routing_source = (
+            source
+            if isinstance(source, str) and source in {"deterministic", "semantic", "fallback"}
+            else "N/A"
+        )
+        failure_rows.append(
+            "| "
+            + " | ".join(
+                (
+                    case["id"],
+                    case["category"],
+                    ", ".join(case["expected"]["allowedRoutes"]),
+                    actual_route,
+                    routing_source,
+                    ", ".join(result["failures"]),
+                )
+            )
+            + " |"
+        )
+    details = "\n".join(
+        (
+            "## Route failure details",
+            "",
+            "| Case ID | Category | Allowed routes | Actual route | Routing source | Failures |",
+            "| --- | --- | --- | --- | --- | --- |",
+            *(failure_rows or ["| none | — | — | — | — | — |"]),
+            "",
+        )
+    )
+    return "\n".join(
+        (body, "## Hybrid Router coverage", "", f"- Split: `{split}`", note, "", details)
+    )
+
+
+class _ObservedSemanticClassifier:
+    """Track only whether Qwen classification ran or safely fell back."""
+
+    def __init__(self, delegate: SemanticRouteClassifier) -> None:
+        self.delegate = delegate
+        self.calls = 0
+        self.last_failed = False
+
+    async def classify(self, query: str) -> FrameworkRoute:
+        self.calls += 1
+        self.last_failed = False
+        try:
+            return await self.delegate.classify(query)
+        except Exception:
+            self.last_failed = True
+            raise
 
 
 def _coverage_case_ids(cases: list[dict[str, Any]]) -> tuple[list[str], list[str]]:
@@ -86,6 +149,7 @@ def run_offline(cases: list[dict[str, Any]], *, split: str = "dev") -> str:
             resolved_ids.append(case["id"])
             correct += route in case["expected"]["allowedRoutes"]
             observation["route"] = route
+            observation["routing_source"] = "deterministic"
         observations.append(observation)
     note = "\n".join(
         (
@@ -114,10 +178,20 @@ def run_offline(cases: list[dict[str, Any]], *, split: str = "dev") -> str:
 
 
 async def run_live(cases: list[dict[str, Any]], *, split: str = "dev") -> str:
-    router = HybridRouter(build_production_semantic_router())
-    observations = [
-        {"id": case["id"], "route": await router.route(_router_input(case))} for case in cases
-    ]
+    classifier = _ObservedSemanticClassifier(build_production_semantic_router())
+    router = HybridRouter(classifier)
+    observations = []
+    for case in cases:
+        calls_before = classifier.calls
+        route = await router.route(_router_input(case))
+        source = (
+            "deterministic"
+            if classifier.calls == calls_before
+            else "fallback"
+            if classifier.last_failed
+            else "semantic"
+        )
+        observations.append({"id": case["id"], "route": route, "routing_source": source})
     deterministic_ids, semantic_ids = _coverage_case_ids(cases)
     note = "\n".join(
         (

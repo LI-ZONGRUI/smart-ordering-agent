@@ -1,0 +1,21 @@
+{
+  "benchmarkName": "hybrid-router-holdout-v2",
+  "benchmarkVersion": 1,
+  "holdoutVersion": 2,
+  "frozenAt": "2026-10-07",
+  "totalCases": 40,
+  "categoryCounts": {
+    "menu": 8,
+    "rag": 8,
+    "action": 7,
+    "multi_turn": 8,
+    "safety": 7,
+    "smalltalk": 2
+  },
+  "sha256": {
+    "holdout-v2.jsonl": "401ff082c057d0f11b2849cd97c88471f94eda2104d31dc914b39b5fd9a7becd"
+  },
+  "purpose": "Route-only unseen evaluation after Router v2 implementation",
+  "sourceContract": "docs/framework/ROUTING_CONTRACT.md",
+  "changePolicy": "Immutable after creation; any change requires a new holdout version."
+}
