@@ -18,6 +18,7 @@ from app.graph.router import (
     classify_high_confidence,
 )
 from evals.hybrid_router_runner import (
+    HOLDOUT_V2_DATASET,
     _render,
     default_report_path,
     load_split,
@@ -25,8 +26,15 @@ from evals.hybrid_router_runner import (
     run_live,
     run_offline,
     validate_options,
+    verify_holdout_v2_freeze,
 )
-from evals.schema import DATASET_DIR, load_jsonl, sha256_file, verify_frozen_artifacts
+from evals.schema import (
+    DATASET_DIR,
+    BenchmarkSchemaError,
+    load_jsonl,
+    sha256_file,
+    verify_frozen_artifacts,
+)
 
 
 class RecordingSemanticClassifier:
@@ -422,6 +430,7 @@ def test_hybrid_runner_default_split_is_dev() -> None:
 
     assert args.split == "dev"
     assert args.confirm_holdout is False
+    assert args.confirm_holdout_v2 is False
     assert args.live_model is False
 
 
@@ -445,6 +454,28 @@ def test_hybrid_runner_accepts_confirmed_holdout_without_live_model() -> None:
     validate_options(args)
     assert args.split == "holdout"
     assert args.live_model is False
+
+
+def test_hybrid_runner_accepts_confirmed_holdout_v2_without_live_model() -> None:
+    args = parse_args(["--split", "holdout-v2", "--confirm-holdout-v2"])
+
+    validate_options(args)
+    assert args.split == "holdout-v2"
+    assert args.confirm_holdout is False
+
+
+@pytest.mark.parametrize(
+    "arguments",
+    [
+        ["--split", "holdout-v2"],
+        ["--split", "holdout-v2", "--confirm-holdout"],
+    ],
+)
+def test_hybrid_runner_rejects_holdout_v2_without_its_own_confirmation(
+    arguments: list[str],
+) -> None:
+    with pytest.raises(SystemExit, match="Holdout v2 is frozen and requires explicit confirmation"):
+        validate_options(parse_args(arguments))
 
 
 def test_hybrid_runner_rejects_live_model_without_live_confirmation() -> None:
@@ -486,9 +517,67 @@ def test_hybrid_runner_holdout_live_requires_both_confirmations(
     )
 
 
+@pytest.mark.parametrize(
+    "arguments, message",
+    [
+        (
+            ["--split", "holdout-v2", "--live-model", "--confirm-live"],
+            "Holdout v2 is frozen and requires explicit confirmation",
+        ),
+        (
+            ["--split", "holdout-v2", "--confirm-holdout-v2", "--live-model"],
+            "--live-model requires --confirm-live",
+        ),
+    ],
+)
+def test_hybrid_runner_holdout_v2_live_requires_both_confirmations(
+    arguments: list[str], message: str
+) -> None:
+    with pytest.raises(SystemExit, match=message):
+        validate_options(parse_args(arguments))
+
+    validate_options(
+        parse_args(
+            [
+                "--split",
+                "holdout-v2",
+                "--confirm-holdout-v2",
+                "--live-model",
+                "--confirm-live",
+            ]
+        )
+    )
+
+
 def test_hybrid_runner_loads_expected_split_counts_without_printing_cases() -> None:
     assert len(load_split("dev")) == 80
     assert len(load_split("holdout")) == 40
+    assert len(load_split("holdout-v2")) == 40
+
+
+def test_hybrid_runner_checks_holdout_v2_hash_before_loading(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    load_called = False
+
+    def fail_if_loaded(path: Path) -> list[dict[str, object]]:
+        nonlocal load_called
+        load_called = True
+        raise AssertionError(f"dataset must not load after hash mismatch: {path.name}")
+
+    monkeypatch.setattr("evals.hybrid_router_runner.sha256_file", lambda path: "0" * 64)
+    monkeypatch.setattr("evals.hybrid_router_runner.load_jsonl", fail_if_loaded)
+
+    with pytest.raises(BenchmarkSchemaError, match="freeze hash mismatch"):
+        load_split("holdout-v2")
+    assert load_called is False
+
+
+def test_hybrid_runner_holdout_v2_freeze_matches_manifest() -> None:
+    manifest = verify_holdout_v2_freeze()
+
+    assert manifest["totalCases"] == 40
+    assert sha256_file(HOLDOUT_V2_DATASET) == manifest["sha256"][HOLDOUT_V2_DATASET.name]
 
 
 def test_hybrid_runner_does_not_modify_frozen_dataset() -> None:
@@ -502,13 +591,22 @@ def test_hybrid_runner_does_not_modify_frozen_dataset() -> None:
     assert after == before == manifest["sha256"]
 
 
-def test_dev_and_holdout_use_the_same_router_implementation(
+def test_hybrid_runner_does_not_modify_holdout_v2_dataset() -> None:
+    before = sha256_file(HOLDOUT_V2_DATASET)
+
+    load_split("holdout-v2")
+
+    assert sha256_file(HOLDOUT_V2_DATASET) == before
+
+
+def test_all_splits_use_the_same_router_implementation(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     source_case = load_split("dev")[0]
     dev_case = copy.deepcopy(source_case)
     holdout_case = copy.deepcopy(source_case)
     holdout_case["split"] = "holdout"
+    holdout_v2_case = copy.deepcopy(holdout_case)
     calls: list[str] = []
 
     def fake_classifier(query: str) -> str:
@@ -519,8 +617,9 @@ def test_dev_and_holdout_use_the_same_router_implementation(
 
     run_offline([dev_case], split="dev")
     run_offline([holdout_case], split="holdout")
+    run_offline([holdout_v2_case], split="holdout-v2")
 
-    assert calls == [_router_query(source_case), _router_query(source_case)]
+    assert calls == [_router_query(source_case)] * 3
 
 
 def _router_query(case: dict[str, object]) -> str:
@@ -548,6 +647,13 @@ def test_hybrid_report_marks_selected_split_and_default_paths() -> None:
         default_report_path(split="holdout", live_model=True).name
         == "hybrid-router-holdout-live-v1.md"
     )
+    holdout_v2_report = run_offline([case], split="holdout-v2")
+    assert "Split: `holdout-v2`" in holdout_v2_report
+    assert "Mode: `hybrid-router-holdout-v2-deterministic-only`" in holdout_v2_report
+    assert (
+        default_report_path(split="holdout-v2", live_model=True).name
+        == "hybrid-router-holdout-v2-live-v1.md"
+    )
 
 
 def _route_failure_case() -> dict[str, object]:
@@ -556,6 +662,22 @@ def _route_failure_case() -> dict[str, object]:
     case["expected"]["expectedResolvedQuery"] = None
     case["expected"]["allowedRoutes"] = ["knowledge_query"]
     return case
+
+
+@pytest.mark.asyncio
+async def test_all_splits_use_the_same_live_hybrid_router(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    case = _route_failure_case()
+    classifier = RecordingSemanticClassifier("smalltalk")
+    monkeypatch.setattr(
+        "evals.hybrid_router_runner.build_production_semantic_router", lambda: classifier
+    )
+
+    for split in ("dev", "holdout", "holdout-v2"):
+        await run_live([case], split=split)
+
+    assert classifier.queries == ["帮我想一想"] * 3
 
 
 def test_offline_failure_report_records_only_safe_route_metadata() -> None:
@@ -632,3 +754,33 @@ def test_failure_report_does_not_serialize_untrusted_observation_fields() -> Non
     assert "private-provider-response" not in report
     assert "private-provider-reasoning" not in report
     assert "private-token" not in report
+
+
+def test_holdout_v2_report_never_serializes_case_or_provider_payloads() -> None:
+    case = _route_failure_case()
+    private_query = "private-query-fixture"
+    private_history = "private-history-fixture"
+    private_response = "private-provider-response-fixture"
+    case["input"] = {
+        "query": private_query,
+        "history": [{"role": "user", "content": private_history}],
+    }
+    report = _render(
+        [case],
+        [
+            {
+                "id": case["id"],
+                "route": "smalltalk",
+                "routing_source": "semantic",
+                "rawResponse": private_response,
+            }
+        ],
+        split="holdout-v2",
+        mode="hybrid-router-holdout-v2-live-model",
+        note="fixture",
+    )
+
+    assert "Split: `holdout-v2`" in report
+    assert private_query not in report
+    assert private_history not in report
+    assert private_response not in report

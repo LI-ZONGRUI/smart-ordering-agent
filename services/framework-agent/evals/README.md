@@ -130,13 +130,22 @@ PYTHONPATH=. .venv/bin/python -m evals.hybrid_router_runner \
   --split holdout --confirm-holdout \
   --live-model --confirm-live \
   --report evals/reports/hybrid-router-holdout-live-v1.md
+
+# First frozen Holdout v2 live evaluation: v2 and live-model confirmations are independent
+PYTHONPATH=. .venv/bin/python -m evals.hybrid_router_runner \
+  --split holdout-v2 --confirm-holdout-v2 \
+  --live-model --confirm-live
 ```
 
 The default remains the 80-case Dev split. The frozen 40-case Holdout cannot run without
 `--confirm-holdout`; live Qwen classification independently requires `--live-model --confirm-live`.
-Dev and Holdout share the same Hybrid Router, validators, metrics, and report implementation. Live
-mode calls Qwen only for queries unresolved by deterministic rules; it does not call Gateway,
-uniCloud, Tools, RAG, or a database.
+The separately frozen 40-case Holdout v2 cannot run without `--confirm-holdout-v2`; the v1 flag does
+not confirm v2. Before loading v2 for evaluation, the runner requires both files, verifies the
+manifest declares 40 cases, verifies the dataset SHA-256, and validates the common schema. A v2
+live run therefore requires all four flags shown above and defaults to
+`evals/reports/hybrid-router-holdout-v2-live-v1.md`. Dev, Holdout v1, and Holdout v2 share the same
+Hybrid Router, validators, metrics, and report implementation. Live mode calls Qwen only for queries
+unresolved by deterministic rules; it does not call Gateway, uniCloud, Tools, RAG, or a database.
 
 Router v2 preserves that runner and strict five-route output contract. Its deterministic layer first
 keeps genuinely unsupported transaction/destructive/internal operations on `unsupported_action`, then
@@ -149,9 +158,9 @@ entity-keyword collisions.
 Holdout v1 has already been evaluated and analyzed; it is now a regression/failure-analysis set.
 Any future report from it must be named `holdout-v1-regression`, not an unseen/generalization result.
 The independent `holdout-v2.jsonl` is a 40-case route-only set frozen by
-`holdout-v2-manifest.json` before Router v2 implementation. The current runner does not select v2,
-and v2 must not be inspected or run during Router development; only metadata freeze tests may run.
-New Hybrid reports include a failure
+`holdout-v2-manifest.json` before Router v2 implementation and has never been evaluated. It is
+reserved for Router v2's first unseen generalization test and is selected only through the separate
+v2 confirmation described above. New Hybrid reports include a failure
 table containing only case ID, category, allowed routes, actual route, routing source
 (`deterministic`, `semantic` or `fallback`) and failure taxonomy. Neither raw model output nor
 user query/history is written to that table.

@@ -22,6 +22,7 @@ from evals.schema import (
     SPLIT_COUNTS,
     BenchmarkSchemaError,
     load_jsonl,
+    sha256_file,
     validate_dataset,
 )
 from evals.validators import evaluate_case
@@ -31,6 +32,11 @@ OFFLINE_REPORT = REPORT_DIR / "hybrid-router-dev-v1.md"
 LIVE_REPORT = REPORT_DIR / "hybrid-router-dev-live-v1.md"
 HOLDOUT_OFFLINE_REPORT = REPORT_DIR / "hybrid-router-holdout-v1.md"
 HOLDOUT_LIVE_REPORT = REPORT_DIR / "hybrid-router-holdout-live-v1.md"
+HOLDOUT_V2_DATASET = DATASET_DIR / "holdout-v2.jsonl"
+HOLDOUT_V2_MANIFEST = DATASET_DIR / "holdout-v2-manifest.json"
+HOLDOUT_V2_OFFLINE_REPORT = REPORT_DIR / "hybrid-router-holdout-v2-v1.md"
+HOLDOUT_V2_LIVE_REPORT = REPORT_DIR / "hybrid-router-holdout-v2-live-v1.md"
+HOLDOUT_V2_COUNT = 40
 
 
 def _router_input(case: dict[str, Any]) -> str:
@@ -168,11 +174,7 @@ def run_offline(cases: list[dict[str, Any]], *, split: str = "dev") -> str:
         cases,
         observations,
         split=split,
-        mode=(
-            "hybrid-router-deterministic-only"
-            if split == "dev"
-            else "hybrid-router-holdout-deterministic-only"
-        ),
+        mode=_mode_name(split=split, live_model=False),
         note=note,
     )
 
@@ -208,17 +210,25 @@ async def run_live(cases: list[dict[str, Any]], *, split: str = "dev") -> str:
         cases,
         observations,
         split=split,
-        mode=("hybrid-router-live-model" if split == "dev" else "hybrid-router-holdout-live-model"),
+        mode=_mode_name(split=split, live_model=True),
         note=note,
     )
+
+
+def _mode_name(*, split: str, live_model: bool) -> str:
+    if split == "dev":
+        return "hybrid-router-live-model" if live_model else "hybrid-router-deterministic-only"
+    suffix = "live-model" if live_model else "deterministic-only"
+    return f"hybrid-router-{split}-{suffix}"
 
 
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         description="Evaluate Hybrid Router on a frozen benchmark split"
     )
-    parser.add_argument("--split", choices=("dev", "holdout"), default="dev")
+    parser.add_argument("--split", choices=("dev", "holdout", "holdout-v2"), default="dev")
     parser.add_argument("--confirm-holdout", action="store_true")
+    parser.add_argument("--confirm-holdout-v2", action="store_true")
     parser.add_argument("--live-model", action="store_true")
     parser.add_argument("--confirm-live", action="store_true")
     parser.add_argument("--report", type=Path)
@@ -228,16 +238,54 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
 def validate_options(args: argparse.Namespace) -> None:
     if args.split == "holdout" and not args.confirm_holdout:
         raise SystemExit("Holdout is frozen and requires explicit confirmation.")
+    if args.split == "holdout-v2" and not args.confirm_holdout_v2:
+        raise SystemExit("Holdout v2 is frozen and requires explicit confirmation.")
     if args.live_model and not args.confirm_live:
         raise SystemExit("--live-model requires --confirm-live")
 
 
+def verify_holdout_v2_freeze(
+    *, dataset_path: Path = HOLDOUT_V2_DATASET, manifest_path: Path = HOLDOUT_V2_MANIFEST
+) -> dict[str, Any]:
+    if not dataset_path.is_file():
+        raise BenchmarkSchemaError("Holdout v2 dataset is missing")
+    if not manifest_path.is_file():
+        raise BenchmarkSchemaError("Holdout v2 manifest is missing")
+    try:
+        manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    except (json.JSONDecodeError, OSError) as error:
+        raise BenchmarkSchemaError("Holdout v2 manifest is invalid") from error
+    if not isinstance(manifest, dict):
+        raise BenchmarkSchemaError("Holdout v2 manifest is invalid")
+    hashes = manifest.get("sha256")
+    expected_hash = hashes.get(dataset_path.name) if isinstance(hashes, dict) else None
+    if (
+        manifest.get("benchmarkName") != "hybrid-router-holdout-v2"
+        or manifest.get("holdoutVersion") != 2
+        or manifest.get("totalCases") != HOLDOUT_V2_COUNT
+        or not isinstance(expected_hash, str)
+    ):
+        raise BenchmarkSchemaError("Holdout v2 manifest does not match the frozen contract")
+    if sha256_file(dataset_path) != expected_hash:
+        raise BenchmarkSchemaError("Holdout v2 freeze hash mismatch")
+    return manifest
+
+
 def load_split(split: str) -> list[dict[str, Any]]:
-    cases = load_jsonl(DATASET_DIR / f"{split}.jsonl")
+    if split == "holdout-v2":
+        verify_holdout_v2_freeze()
+        cases = load_jsonl(HOLDOUT_V2_DATASET)
+        expected_count = HOLDOUT_V2_COUNT
+        expected_case_split = "holdout"
+        contract = "frozen Holdout v2 contract"
+    else:
+        cases = load_jsonl(DATASET_DIR / f"{split}.jsonl")
+        expected_count = SPLIT_COUNTS[split]
+        expected_case_split = split
+        contract = "frozen v1 contract"
     validate_dataset(cases, enforce_totals=False)
-    expected_count = SPLIT_COUNTS[split]
-    if len(cases) != expected_count or any(case["split"] != split for case in cases):
-        raise BenchmarkSchemaError(f"{split} split does not match the frozen v1 contract")
+    if len(cases) != expected_count or any(case["split"] != expected_case_split for case in cases):
+        raise BenchmarkSchemaError(f"{split} split does not match the {contract}")
     return cases
 
 
@@ -247,6 +295,8 @@ def default_report_path(*, split: str, live_model: bool) -> Path:
         ("dev", True): LIVE_REPORT,
         ("holdout", False): HOLDOUT_OFFLINE_REPORT,
         ("holdout", True): HOLDOUT_LIVE_REPORT,
+        ("holdout-v2", False): HOLDOUT_V2_OFFLINE_REPORT,
+        ("holdout-v2", True): HOLDOUT_V2_LIVE_REPORT,
     }[(split, live_model)]
 
 

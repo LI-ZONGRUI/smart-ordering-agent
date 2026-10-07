@@ -184,12 +184,15 @@ The real Hybrid Router Dev result was 80/80. The first frozen Holdout v1 result 
 analysis set; it cannot be presented again as a fully unseen final test. The separate route-only
 Holdout v2 was created and SHA-256 frozen before any Router v2 production implementation. During
 Router v2 development it remained unread and unexecuted; only its metadata-only freeze tests are
-permitted. It has not been wired into the current runner. See `ROUTING_CONTRACT.md` for route
-ownership and the separation between routing and execution authorization. Router evaluation receives
-the post-contextualization query and does not measure Context Resolution Accuracy. New regression
-tests use independently authored paraphrases for query-before-action, cart actions with unsafe
-modifiers, pure unsupported operations, unanswerable/stable knowledge, indecision and entity-keyword
-collisions; they do not copy Holdout v2 cases.
+permitted. The runner now exposes it only as `--split holdout-v2`, with a distinct
+`--confirm-holdout-v2` gate and pre-evaluation file, 40-case count, manifest SHA-256, and schema
+verification. Its first live run also requires `--live-model --confirm-live`; v1 and live-model
+confirmations do not substitute for the v2 confirmation. See `ROUTING_CONTRACT.md` for route ownership
+and the separation between routing and execution authorization. Router evaluation receives the
+post-contextualization query and does not measure Context Resolution Accuracy. New regression tests
+use independently authored paraphrases for query-before-action, cart actions with unsafe modifiers,
+pure unsupported operations, unanswerable/stable knowledge, indecision and entity-keyword collisions;
+they do not copy Holdout v2 cases.
 
 ## Running
 
@@ -213,6 +216,11 @@ PYTHONPATH=. .venv/bin/python -m evals.hybrid_router_runner
 
 # Explicit Qwen routing for unresolved Dev cases; no Gateway or uniCloud call
 PYTHONPATH=. .venv/bin/python -m evals.hybrid_router_runner \
+  --live-model --confirm-live
+
+# First unseen Holdout v2 live evaluation; writes the dedicated v2 report by default
+PYTHONPATH=. .venv/bin/python -m evals.hybrid_router_runner \
+  --split holdout-v2 --confirm-holdout-v2 \
   --live-model --confirm-live
 ```
 
