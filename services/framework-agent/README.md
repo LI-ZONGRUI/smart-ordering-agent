@@ -296,11 +296,14 @@ START
 
 `FrameworkGraphState` contains the original `query`, internal `resolved_query`, bounded `messages`,
 `route`, `answer`, `completed` and an optional strict `pendingAction`. It does not store keys,
-Gateway secrets, prompts, model reasoning, raw model responses or Tool messages. The Hybrid Router
-first applies deterministic safety and high-confidence business rules. Only unresolved standalone
-queries reach a strict Qwen route classifier; invalid output or provider failure falls back to
-read-only `menu_query`. The classifier can only select an existing route and has no Tool, Gateway,
-cart, order or payment authority.
+Gateway secrets, prompts, model reasoning, raw model responses or Tool messages. Hybrid Router v2
+first keeps unsupported transaction/destructive/internal operations deterministic, then routes the
+supported main intent. A future action does not override a current lookup, and an unsafe execution
+modifier does not override a supported cart proposal or grant authority. Current menu facts and
+exploration belong to `menu_query`; stable dish knowledge belongs to `knowledge_query` independently
+of RAG answerability. Only unresolved standalone queries reach the strict five-route Qwen classifier;
+invalid output or provider failure falls back to read-only `menu_query`. The classifier can only
+select an existing route and has no Tool, Gateway, cart, order or payment authority.
 
 For a validated add-to-cart proposal, `native_action_node` does not expose the Native Agent's free
 answer. It deterministically renders the dish name, quantity, unit price and total from

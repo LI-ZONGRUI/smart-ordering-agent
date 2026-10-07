@@ -112,7 +112,7 @@ correction requires an explicit manifest revision and changelog entry; semantic 
 create V2. The full Holdout answer key must not be copied into README, prompts, or Tool descriptions.
 The default Runner selects only Dev; Holdout or all-case evaluation requires `--confirm-holdout`.
 
-## Hybrid Router Dev comparison
+## Hybrid Router Dev comparison and Router v2
 
 The historical `offline-dev-baseline-v1.md` remains the pre-change Rule Router result: 68/80. The
 new Hybrid Router uses a separate runner and report so the baseline cannot be overwritten:
@@ -138,10 +138,20 @@ Dev and Holdout share the same Hybrid Router, validators, metrics, and report im
 mode calls Qwen only for queries unresolved by deterministic rules; it does not call Gateway,
 uniCloud, Tools, RAG, or a database.
 
+Router v2 preserves that runner and strict five-route output contract. Its deterministic layer first
+keeps genuinely unsupported transaction/destructive/internal operations on `unsupported_action`, then
+routes supported main intent without treating future-action language or unsafe authorization modifiers
+as route ownership. Live menu facts and exploration belong to `menu_query`; stable knowledge belongs
+to `knowledge_query` independently of answerability; supported cart proposals belong to `action_query`
+without gaining execution authority. Independently authored unit regressions cover these boundaries and
+entity-keyword collisions.
+
 Holdout v1 has already been evaluated and analyzed; it is now a regression/failure-analysis set.
+Any future report from it must be named `holdout-v1-regression`, not an unseen/generalization result.
 The independent `holdout-v2.jsonl` is a 40-case route-only set frozen by
 `holdout-v2-manifest.json` before Router v2 implementation. The current runner does not select v2,
-and v2 must not be inspected or run during Router development. New Hybrid reports include a failure
+and v2 must not be inspected or run during Router development; only metadata freeze tests may run.
+New Hybrid reports include a failure
 table containing only case ID, category, allowed routes, actual route, routing source
 (`deterministic`, `semantic` or `fallback`) and failure taxonomy. Neither raw model output nor
 user query/history is written to that table.

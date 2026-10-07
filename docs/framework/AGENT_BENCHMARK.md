@@ -137,24 +137,36 @@ The committed Dev offline baseline reports only fields that Level 1 actually obs
 is useful for surfacing dataset/Router disagreements, while Tool, Qwen, Contextualizer, RAG and
 side-effect metrics remain `N/A`. It is not a fabricated cloud score.
 
-## Hybrid Router comparison
+## Hybrid Router v1 history and Router v2
 
 The frozen pre-change Rule Router baseline remains in `offline-dev-baseline-v1.md`: 68/80 Dev
 routes, or 85%. It is historical evidence and is not overwritten.
 
-The Hybrid Router applies these layers in order:
+Hybrid Router v1 applied these layers in order:
 
 1. Deterministic safety rules for unsupported writes, bypass requests and internal Tool requests.
 2. High-confidence price/status, proposal, knowledge and smalltalk intent rules.
 3. A strict Qwen semantic fallback only when the deterministic layer returns unresolved.
 
-The deterministic layer does not use a bare `辣` marker, so a dish name cannot override an explicit
-price phrase. Stable `口感 / 组成 / 怎么描述 / 如何描述` semantics route to RAG; invalid quantities
-remain action intent and are rejected by the existing downstream validation rather than disguised as
-menu queries. Semantic output accepts only one of the five existing routes through the same verified
-normalized Tool Call, raw OpenAI Tool Call, or strict JSON compatibility pattern used by the
-Contextualizer. Invalid output and provider failure fall back to read-only `menu_query` without
-exposing provider data.
+Router v2 keeps the same two-layer architecture and strict output parser, but changes deterministic
+ownership and Semantic Router definitions around main intent:
+
+1. Unsupported transaction/destructive operations, internal Tool requests and sensitive internal
+   access remain deterministic `unsupported_action`.
+2. Query-before-action phrases route by the current lookup task. Future ordering language is context,
+   not the main operation.
+3. A supported cart proposal remains `action_query` when accompanied by an unsafe confirmation or
+   authorization modifier. Routing does not honor the modifier; downstream validation and explicit UI
+   confirmation remain mandatory.
+4. Health, nutrition, pairing, preparation and recommendation rationale join taste, ingredients and
+   composition under stable `knowledge_query` ownership. This is independent of RAG answerability.
+5. Explicit current price/status and menu exploration remain `menu_query`. Words embedded in entity
+   names, including `辣 / 推荐 / 清爽`, do not independently select a route.
+
+Only unresolved semantics reach Qwen. Semantic output still accepts exactly one of five routes through
+the same verified normalized Tool Call, raw OpenAI Tool Call, or strict JSON compatibility pattern used
+by the Contextualizer. Invalid, empty or unknown output and provider failure still fall back to read-only
+`menu_query` without exposing provider data.
 
 `hybrid-router-dev-v1.md` is a deterministic-only report. It reports Route Accuracy only for cases
 resolved by high-confidence rules and leaves semantic cases `N/A`; it is not a real Qwen score. A
@@ -163,17 +175,21 @@ and confirmation flags. Future Hybrid reports record the actual route and routin
 failure using only case ID, category, allowed routes, actual route and failure taxonomy; they do
 not serialize queries, history, provider responses or internal state.
 
-The current offline result resolves 74/80 Dev cases deterministically and matches 74/74 of those
+The Router v2 offline result resolves 74/80 Dev cases deterministically and matches 74/74 of those
 labels. Six cases require the semantic classifier and remain `N/A`, so this result must not be
 reported as 100% Hybrid Router Dev accuracy. The frozen Rule Router comparison remains 68/80.
 
 The real Hybrid Router Dev result was 80/80. The first frozen Holdout v1 result was 33/40
 (82.50%). Its seven failures were reviewed after the run. That made v1 a regression and failure-
 analysis set; it cannot be presented again as a fully unseen final test. The separate route-only
-Holdout v2 was created and SHA-256 frozen before any Router v2 production implementation. It has
-not been evaluated or wired into the current runner. See `ROUTING_CONTRACT.md` for route ownership
-and the separation between routing and execution authorization. Router evaluation receives the
-post-contextualization query and does not measure Context Resolution Accuracy.
+Holdout v2 was created and SHA-256 frozen before any Router v2 production implementation. During
+Router v2 development it remained unread and unexecuted; only its metadata-only freeze tests are
+permitted. It has not been wired into the current runner. See `ROUTING_CONTRACT.md` for route
+ownership and the separation between routing and execution authorization. Router evaluation receives
+the post-contextualization query and does not measure Context Resolution Accuracy. New regression
+tests use independently authored paraphrases for query-before-action, cart actions with unsafe
+modifiers, pure unsupported operations, unanswerable/stable knowledge, indecision and entity-keyword
+collisions; they do not copy Holdout v2 cases.
 
 ## Running
 
