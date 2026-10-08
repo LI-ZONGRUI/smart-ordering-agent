@@ -20,6 +20,18 @@ query.
 Rules:
 - Use only the supplied recent user/assistant conversation to resolve references or omitted
   subjects.
+- Apply resolution precedence in this order: a current-turn correction, then an entity explicitly
+  named in the current turn, then the single most recent unambiguous entity in the conversation.
+- A current-turn correction replaces the corrected historical value. Do not keep a corrected entity
+  or quantity as an active value in the standalone query.
+- When the current turn names a new entity, it replaces the historical entity. When it omits the
+  intent, preserve the most recent relevant intent from the conversation.
+- When the current turn corrects a quantity, replace the historical quantity while preserving the
+  relevant entity and intent.
+- If multiple historical entities are equally plausible, do not choose one. Keep the reference
+  unresolved or ask a concise clarification question while preserving any explicit intent and
+  quantity.
+- If there is no single unambiguous entity in the conversation, do not guess or invent one.
 - Call return_standalone_query exactly once with the resolved standalone_query. Do not answer with
   prose.
 - Do not answer the query.
@@ -45,9 +57,14 @@ _CONTEXTUALIZE_TOOL = {
     },
 }
 
-_CONTEXT_DEPENDENT = re.compile(
+_REFERENCE_OR_ELLIPSIS = re.compile(
     r"(?:它|这个|那个|这杯|那杯|这份|那份|这道|那道|多少钱|什么味道|还有吗|"
-    r"再来|来\s*(?:一|两|二|三|四|五|六|七|八|九|十|\d+)\s*(?:份|杯|个))"
+    r"再来|来\s*(?:一|两|二|三|四|五|六|七|八|九|十|\d+)\s*(?:份|杯|个)|"
+    r"^(?:现在|目前)?\s*(?:还)?\s*(?:能|可以)点吗[?？!！。\s]*$)"
+)
+_DISCOURSE_FOLLOWUP = re.compile(
+    r"^(?:(?:那|那么)\s*.+|(?:换成|改成)\s*.+|我说的是\s*.+|"
+    r"不是\s*.+?(?:[，,]\s*)?(?:是|而是|我(?:说|问|要)(?:的是)?|换成|改成)\s*.+)"
 )
 _CONFIRMATION_ONLY = re.compile(r"^(?:确认|确定|好的?确认|就这样)[!！。,.，\s]*$")
 
@@ -63,7 +80,10 @@ def needs_contextualization(query: str, *, has_history: bool) -> bool:
     return (
         has_history
         and _CONFIRMATION_ONLY.fullmatch(normalized) is None
-        and _CONTEXT_DEPENDENT.search(normalized) is not None
+        and (
+            _REFERENCE_OR_ELLIPSIS.search(normalized) is not None
+            or _DISCOURSE_FOLLOWUP.search(normalized) is not None
+        )
     )
 
 

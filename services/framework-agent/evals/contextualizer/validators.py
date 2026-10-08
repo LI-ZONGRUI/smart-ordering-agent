@@ -83,6 +83,7 @@ _NEW_FACT_PATTERNS = (
     re.compile(r"\d+(?:\.\d+)?\s*元"),
     re.compile(r"(?:大杯|中杯|小杯|少冰|去冰|加冰|少糖|无糖|加糖)"),
 )
+_NEGATED_MENTION_PREFIX = re.compile(r"(?:不是|并非|不要|别选|而非)\s*$")
 
 
 def normalize_text(value: str) -> str:
@@ -90,8 +91,20 @@ def normalize_text(value: str) -> str:
     return re.sub(r"[\s，。！？、；：,.!?;:'\"“”‘’（）()]+", "", normalized)
 
 
+def _is_negated_mention(text: str, start: int) -> bool:
+    prefix = text[max(0, start - 4) : start]
+    return _NEGATED_MENTION_PREFIX.search(prefix) is not None
+
+
 def _entities(text: str) -> set[str]:
-    return {entity for entity in _KNOWN_ENTITIES if entity in text}
+    entities: set[str] = set()
+    for entity in _KNOWN_ENTITIES:
+        if any(
+            not _is_negated_mention(text, match.start())
+            for match in re.finditer(re.escape(entity), text)
+        ):
+            entities.add(entity)
+    return entities
 
 
 def _intent(text: str) -> str | None:
@@ -107,12 +120,22 @@ def _intent(text: str) -> str | None:
 def _quantities(text: str) -> set[int]:
     values: set[int] = set()
     for match in _QUANTITY.finditer(text):
+        if _is_negated_mention(text, match.start()):
+            continue
         token = match.group(1)
         if token.isdigit():
             values.add(int(token))
         elif token in _CHINESE_NUMBERS:
             values.add(_CHINESE_NUMBERS[token])
     return values
+
+
+def _superseded_quantities(case: dict[str, Any], expected_quantity: int) -> set[int]:
+    current_quantities = _quantities(case["query"])
+    if expected_quantity not in current_quantities:
+        return set()
+    history = "\n".join(message["content"] for message in case["history"])
+    return _quantities(history) - current_quantities
 
 
 def _source_text(case: dict[str, Any]) -> str:
@@ -204,9 +227,14 @@ def evaluate_case(case: dict[str, Any], observation: dict[str, Any]) -> dict[str
 
     intent_ok = _intent(output) == expected["intent"]
     expected_quantity = expected["quantity"]
-    quantity_ok = (
-        expected_quantity in _quantities(output) if expected_quantity is not None else None
-    )
+    if expected_quantity is None:
+        quantity_ok = None
+    else:
+        actual_quantities = _quantities(output)
+        superseded_quantities = _superseded_quantities(case, expected_quantity)
+        quantity_ok = expected_quantity in actual_quantities and not (
+            actual_quantities & superseded_quantities
+        )
     clarification_ok = clarification is expected["requiresClarification"]
     preserved_facts = all(
         normalize_text(fact) in normalize_text(output) for fact in expected["mustPreserveFacts"]
