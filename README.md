@@ -228,6 +228,11 @@ UI 的 `submittingOrder` 只能防普通双击。对于“服务器已写入但�
 
 ## Evaluation
 
+独立评测除 Router 与 Contextualizer 外，还包括 40 条
+[Tool Selection + Sequential Replanning Benchmark](docs/framework/TOOL_REPLANNING_BENCHMARK.md)。
+它用安全 trace 区分“同一模型决策并行调用两个 Tool”和“模型观察第一个 Tool Result 后再规划
+第二个 Tool”，采用 Dev 30 / frozen Holdout 10；默认 Runner 完全离线，本阶段未运行 Holdout。
+
 以下为真实云端评测结果，范围是 **21-chunk 小型知识库与 12-query 人工固定评测集**（6 supported、3 unsupported-domain、3 external-OOD），不是生产 Benchmark。
 
 | Metric | Result |

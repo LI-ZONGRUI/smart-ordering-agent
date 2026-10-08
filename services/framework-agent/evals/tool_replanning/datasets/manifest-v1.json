@@ -1,0 +1,22 @@
+{
+  "benchmarkName": "tool-replanning-benchmark-v1",
+  "benchmarkVersion": 1,
+  "frozenAt": "2026-10-08",
+  "totalCases": 40,
+  "splitCounts": {
+    "dev": 30,
+    "holdout": 10
+  },
+  "categoryCounts": {
+    "single_tool_selection": 12,
+    "tool_argument_accuracy": 8,
+    "no_tool_needed": 5,
+    "sequential_replanning": 8,
+    "no_premature_parallelism": 4,
+    "tool_empty_or_failure": 3
+  },
+  "sha256": {
+    "dev.jsonl": "fc5c7f15f5a13e541e33e88c967d7ddac7cb70b68578dee36ecdfbc5bd44a6f8",
+    "holdout.jsonl": "20725c813bf09f1dd1147a1ea1e6bf8aa00040ca4a3a192b5f53d29e686edfdf"
+  }
+}

@@ -8,6 +8,12 @@ The independent Contextualizer suite is under `evals/contextualizer/`. It evalua
 standalone-query resolution and keeps its datasets, metrics, failures, runner, and frozen Holdout
 separate from Router Multi-turn Route Accuracy. See `evals/contextualizer/README.md`.
 
+The independent Tool Selection and Sequential Replanning suite is under
+`evals/tool_replanning/`. Its 40 cases inspect the actual safe Tool trace after a request enters the
+read-only Menu Agent. It separates same-decision parallel calls from result-driven later decisions,
+uses a frozen 30/10 Dev/Holdout split, and never calls a model or network in default mode. See
+`docs/framework/TOOL_REPLANNING_BENCHMARK.md`.
+
 ## Layout
 
 ```text
