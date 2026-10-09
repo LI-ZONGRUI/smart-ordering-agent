@@ -25,6 +25,9 @@ def render_report(
     executed_at: str | None = None,
     validator_version: int = 2,
     agent_source_hash: str | None = None,
+    dataset_manifest_hash: str | None = None,
+    shadow_results: list[dict[str, Any]] | None = None,
+    shadow_validator_version: int | None = None,
 ) -> str:
     categories = Counter(case["category"] for case in cases)
     failures = failure_distribution(results)
@@ -50,6 +53,8 @@ def render_report(
         "| Category | Cases |",
         "| --- | ---: |",
     ]
+    if dataset_manifest_hash is not None:
+        lines.insert(6, f"- Dataset Manifest SHA-256: `{dataset_manifest_hash}`")
     lines.extend(f"| {name} | {categories[name]} |" for name in sorted(categories))
     lines.extend(["", "## Metrics", "", "| Metric | Result |", "| --- | ---: |"])
     lines.extend(f"| {metric['label']} | {_rate(metric)} |" for metric in metrics.values())
@@ -90,4 +95,71 @@ def render_report(
                 "",
             ]
         )
+    if validator_version == 3:
+        from evals.tool_replanning.shadow import tri_state_metrics
+
+        reasons = Counter(
+            reason for result in results for reason in result.get("failureReasons", [])
+        )
+        branches = Counter(code for result in results for code in result.get("branchCodes", []))
+        review_count = sum(r.get("requiresHumanReview") is True for r in results)
+        lines.extend(
+            [
+                "## Validator v3: conservative scoring and review",
+                "",
+                f"- Cases requiring human review: {review_count}/{len(results)}",
+                "- Trigger reasons: "
+                + (", ".join(f"{k}={v}" for k, v in sorted(reasons.items())) or "none"),
+                "- Safe branch codes: "
+                + (", ".join(f"{k}={v}" for k, v in sorted(branches.items())) or "none"),
+                "- REVIEW is not PASS and remains in every original applicable denominator.",
+                "- Machine-detected failure is not a human-verified semantic error. "
+                "PASS is bounded rule acceptance.",
+                "- Validator changes are scoring-contract changes, not Agent "
+                "capability improvements.",
+                "- UNNECESSARY_TOOL_CALL measures frozen strict budget excess, not "
+                "necessarily product uselessness.",
+                "",
+                "| Answer metric | Applicable | PASS | Machine-Detected Failure Count | "
+                "Requires Human Review Count | "
+                "Conservative Automatic Pass Rate | Determinate Check Coverage |",
+                "| --- | ---: | ---: | ---: | ---: | ---: | ---: |",
+            ]
+        )
+        for name, stats in tri_state_metrics(results).items():
+
+            def rate(value):
+                return "N/A" if value is None else f"{value * 100:.2f}%"
+
+            lines.append(
+                f"| {name} | {stats['applicable']} | {stats['pass']} | {stats['fail']} "
+                f"| {stats['review']} | {rate(stats['conservativePassRate'])} | "
+                f"{rate(stats['determinateCoverage'])} |"
+            )
+        lines.append("")
+    if shadow_results is not None:
+        from evals.tool_replanning.metrics import aggregate_metrics
+        from evals.tool_replanning.shadow import compare
+
+        lines.extend(
+            [
+                "## Dev same-output shadow scoring",
+                "",
+                f"- Primary Validator: {validator_version}; Shadow Validator: "
+                f"{shadow_validator_version}",
+                "- Both scorers consume the identical in-memory observations from one "
+                "model execution per case.",
+                "- No raw answer is persisted. Separate applicable denominators are retained.",
+                "",
+                "| Shadow metric | Result |",
+                "| --- | ---: |",
+            ]
+        )
+        lines.extend(
+            f"| {m['label']} | {_rate(m)} |" for m in aggregate_metrics(shadow_results).values()
+        )
+        lines.extend(["", "| Answer metric | Same-output transitions |", "| --- | --- |"])
+        for name, counts in compare(results, shadow_results).items():
+            lines.append(f"| {name} | " + ", ".join(f"{k}={v}" for k, v in counts.items()) + " |")
+        lines.append("")
     return "\n".join(lines)

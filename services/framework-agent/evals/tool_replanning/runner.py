@@ -36,7 +36,8 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--confirm-holdout", action="store_true")
     parser.add_argument("--diagnose-dev", action="store_true")
     parser.add_argument("--case-ids", nargs="+", metavar="DEV_CASE_ID")
-    parser.add_argument("--validator-version", type=int, choices=(1, 2), default=2)
+    parser.add_argument("--validator-version", type=int, choices=(1, 2, 3), default=2)
+    parser.add_argument("--shadow-validator-version", type=int, choices=(2,))
     parser.add_argument("--report", type=Path)
     args = parser.parse_args(argv)
     if args.report is None:
@@ -47,6 +48,11 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
 
 
 def validate_options(args: argparse.Namespace) -> None:
+    if args.shadow_validator_version is not None:
+        if args.split != "dev" or args.validator_version != 3:
+            raise SystemExit("Shadow scoring requires Dev primary Validator v3 and shadow v2")
+        if not args.live_model and args.observations is None:
+            raise SystemExit("Shadow scoring requires observed outputs")
     if args.live_model and not args.confirm_live:
         raise SystemExit("--live-model requires --confirm-live")
     if args.split == "holdout" and not args.confirm_holdout:
@@ -230,6 +236,10 @@ def evaluate_observations(
         from evals.tool_replanning.validators_v1 import evaluate_case as legacy_scorer
 
         scorer = legacy_scorer
+    elif validator_version == 3:
+        from evals.tool_replanning.validators_v3 import evaluate_case as v3_scorer
+
+        scorer = v3_scorer
     elif validator_version != 2:
         raise ToolBenchmarkError("unsupported Validator version")
     return [scorer(case, by_id[case["id"]]) for case in cases if case["id"] in by_id]
@@ -266,6 +276,12 @@ def main(argv: list[str] | None = None) -> None:
         observations = []
         mode = "validation-only"
     results = evaluate_observations(cases, observations, validator_version=args.validator_version)
+    # The exact same observations list is scored twice; no second run_live/model call.
+    shadow_results = (
+        evaluate_observations(cases, observations, validator_version=args.shadow_validator_version)
+        if args.shadow_validator_version is not None
+        else None
+    )
     diagnostic_path = None
     if args.diagnose_dev:
         from evals.tool_replanning.diagnostics import (
@@ -284,6 +300,9 @@ def main(argv: list[str] | None = None) -> None:
         split=args.split,
         validator_version=args.validator_version,
         agent_source_hash=production_agent_source_hash(),
+        dataset_manifest_hash=hashlib.sha256(MANIFEST.read_bytes()).hexdigest(),
+        shadow_results=shadow_results,
+        shadow_validator_version=args.shadow_validator_version,
     )
     args.report.parent.mkdir(parents=True, exist_ok=True)
     args.report.write_text(report, encoding="utf-8")

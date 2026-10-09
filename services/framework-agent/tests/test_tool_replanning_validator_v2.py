@@ -388,7 +388,7 @@ def test_frozen_dev_manifest_history_and_production_code_are_not_modified():
         committed = subprocess.check_output(["git", "show", f"HEAD:{relative}"], cwd=root)
         assert hashlib.sha256(path.read_bytes()).digest() == hashlib.sha256(committed).digest()
     original = subprocess.check_output(
-        ["git", "show", "HEAD:services/framework-agent/evals/tool_replanning/validators.py"],
+        ["git", "show", "HEAD:services/framework-agent/evals/tool_replanning/validators_v1.py"],
         cwd=root,
     )
     legacy = Path(runner.__file__).with_name("validators_v1.py").read_bytes()
@@ -420,7 +420,7 @@ def test_dev_load_and_import_are_offline_and_do_not_open_holdout(monkeypatch):
     assert len(runner.load_split("dev")) == 30
     assert runner.parse_args([]).validator_version == 2
     with pytest.raises(ToolBenchmarkError):
-        runner.evaluate_observations([], [], validator_version=3)
+        runner.evaluate_observations([], [], validator_version=4)
 
 
 def test_trace_and_sequential_function_bodies_are_identical_to_v1():

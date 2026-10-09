@@ -136,8 +136,25 @@ def _answer_diagnostic(
         if all(isinstance(event.get("summary"), dict) for event in results)
         else []
     )
+    analyzer = analyze_answer
+    forbidden_checker = forbidden_phrase_check
+    if validator_version == 3:
+        from evals.tool_replanning.answer_checks_v3 import (
+            analyze_answer as v3_analyzer,
+        )
+        from evals.tool_replanning.answer_checks_v3 import (
+            forbidden_phrase_check as v3_forbidden,
+        )
+
+        analyzer = v3_analyzer
+        forbidden_checker = v3_forbidden
     try:
         checker = _tool_results_not_contradicted
+        if validator_version == 3:
+
+            def checker(events, text):
+                return analyzer(events, text)["verdict"] == "PASS"
+
         if validator_version == 1:
             from evals.tool_replanning.validators_v1 import (
                 _tool_results_not_contradicted as legacy_checker,
@@ -160,12 +177,12 @@ def _answer_diagnostic(
         "requiredGroupHits": (
             [any(term in answer for term in group) for group in groups]
             if validator_version == 1
-            else required_group_hits(answer, groups, analyze_answer(trace, answer))
+            else required_group_hits(answer, groups, analyzer(trace, answer))
         ),
         "forbiddenGroupHit": (
             any(term in answer for term in forbidden)
             if validator_version == 1
-            else forbidden_phrase_check(answer, forbidden)[0]
+            else forbidden_checker(answer, forbidden)[0]
         ),
         "toolContradictionCheckPassed": contradiction_passed,
     }
@@ -219,6 +236,8 @@ def build_dev_diagnostic(
     by_result = {result["id"]: result for result in results}
     if len(by_case) != len(cases) or set(by_result) != set(by_case):
         raise ToolBenchmarkError("diagnostic case/result IDs do not match")
+    from evals.tool_replanning.answer_checks_v3 import BRANCH_CODES
+
     entries = []
     for observation in observations:
         case_id = observation.get("id")
@@ -261,6 +280,22 @@ def build_dev_diagnostic(
                         "emptySearchCheck",
                     }
                 },
+                **(
+                    {
+                        "branchCodes": [
+                            code for code in result.get("branchCodes", []) if code in BRANCH_CODES
+                        ],
+                        "metricVerdicts": {
+                            key: value
+                            for key, value in result.get("metricVerdicts", {}).items()
+                            if key
+                            in {"tool_result_utilization_accuracy", "final_answer_consistency"}
+                            and value in {"PASS", "FAIL", "REVIEW", None}
+                        },
+                    }
+                    if result.get("validatorVersion") == 3
+                    else {}
+                ),
                 "extraCallAudit": _safe_extra_audits(result.get("extraCallAudit", [])),
                 "answerDiagnostic": _answer_diagnostic(
                     case, trace, validator_version=result.get("validatorVersion", 1)

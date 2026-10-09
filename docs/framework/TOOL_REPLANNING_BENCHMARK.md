@@ -246,3 +246,82 @@ Dev 路径校验 Dev JSONL 与 manifest 中的 Dev SHA-256，不打开 Holdout J
 - V1 包含相近措辞与共享本地 fixture，Dev/Holdout 是用例拆分而非跨领域分布拆分；不能夸大泛化结论。
 - 本地 fixture 只覆盖少量菜单状态；实时菜单变化不属于该离线 Benchmark。
 - Holdout 一旦用于失败分析，就不能继续视为完全未见测试集；后续需要新 Holdout 才能再次评估泛化。
+
+## Validator v3：三态、通用语法覆盖与同输出 Shadow
+
+Validator v1 (`validators_v1.py`) 与 v2 (`validators.py` / `answer_checks.py`) 的评分行为完整保留。
+v3 独立使用 `validators_v3.py` 与 `answer_checks_v3.py`；只替换回答评分，工具选择、参数、
+顺序、并行、未授权调用与严格调用预算继续复用 v2。Runner 可选 `--validator-version 1|2|3`，
+为保持旧命令兼容，默认仍为 v2，正式 v3 运行必须显式选择 3。
+
+完整 Dev Validator v2 已有真实模型运行：Utilization 10/25，Final Consistency 14/29，
+14 个 case 有 INDETERMINATE、2 个有 STATUS_MISMATCH，其中 1 个重合。
+安全诊断不足以还原具体触发句，不能将这些自动失败直接认定为真实 Agent 语义错误。
+v3 开发只使用离线构造句，没有新的真实 v3 模型指标。
+
+### 有限规则与三态
+
+- 价格用 Decimal 对照工具单价，支持 `12元`、`12块`、`¥12`、`￥12`、`RMB 12`、
+  `12.00元`。带明确金额标记才按价格处理；普通数量和内部编号不作为价格。
+  明确“合计/总价”不当作单价比较，错误显式单价仍失败。无法解析的货币形式进入 REVIEW。
+- 条件词作用于其后的假设事实；句首条件的逗号后结果仍是假设，句号后重新开始。
+  确定事实后的独立条件建议不污染之前的断言。复杂条件仍需人工复核。
+- 局部否定允许状态引号和“处在”等有限语法；状态同义词覆盖“可以买/能下单”、
+  “买不到/无法购买/不能下单/卖完了”。不能把整句出现“不”当作免责。
+  复杂双重否定、未解析否定、历史/未来或引用状态进入 REVIEW。
+- 多实体逐谓词定位；并列实体共同状态、无法确认主体等情况进入 REVIEW。
+  这不是通用中文解析器，也不能证明回答所有事实均被工具证据支持。
+
+每个适用回答指标独立返回 `PASS / FAIL / REVIEW`，不适用仍为 null。
+PASS 仅表示受支持规则通过；FAIL 是机器检测到合同违背，不等于人工验证的真实语义错误；
+REVIEW 是判断依据不足。REVIEW 不算 PASS，也不移出原 applicable denominator。
+
+报告同时保留原保守自动通过率，并增加：
+
+- Conservative Automatic Pass Rate = PASS / applicable
+- Determinate Check Coverage = (PASS + FAIL) / applicable
+- Machine-Detected Failure Count = FAIL
+- Requires Human Review Count = REVIEW（另有全 case 复核标记，含额外工具预算审计）
+
+两项回答指标共享有限事实检查，不能将重合 failure codes 当作独立 Agent 故障。
+状态/价格正确不代表任意扩写正确；漏掉未支持措辞仍可能发生。
+`UNNECESSARY_TOOL_CALL` 继续测量冻结的严格预算超出，不必然证明该调用在产品上无价值。
+`DATA_DEPENDENT_DETAIL_CANDIDATE` 只提供人工审计信息，不免除预算失败。
+
+### 安全诊断
+
+v3 诊断追加枚举分支，例如 `PRICE_FORMAT_RECOGNIZED`、`PRICE_VALUE_MISMATCH`、
+`PRICE_FORMAT_UNRESOLVED`、`NEGATION_SCOPE_RESOLVED`、`NEGATION_SCOPE_UNRESOLVED`、
+`CONDITIONAL_SCOPE_UNRESOLVED`、`DOUBLE_NEGATION_UNRESOLVED`、`UNCERTAIN_ASSERTION`、
+`TEMPORAL_SCOPE_UNRESOLVED`、`REPORTED_ASSERTION_UNRESOLVED`、`ENTITY_ATTRIBUTION_UNRESOLVED`、
+`STATUS_SYNONYM_RECOGNIZED`、`STATUS_MISMATCH`、`KEY_FACT_UNRECOGNIZED` 与 `REVIEW_REQUIRED`。
+只保存白名单枚举和指标三态，不保存触发句、原始回答、reasoning、provider response、
+完整工具 payload、执行凭证或个人数据。既有 `.local/` Git ignore 与 0700/0600 权限保持不变。
+
+### Dev-only Shadow
+
+显式 `--validator-version 3 --shadow-validator-version 2`：同一次模型执行后，两版评分器读取
+同一份内存 observation（Tool Trace 和 Final Answer）。第二个评分器不参与模型执行，不触发
+第二次 Qwen，不修改生产 Agent，不持久化原始回答。只允许 Dev，真实模型仍需双 live opt-in。
+离线 supplied observations 也可用于测试同输出评分；`--diagnose-dev` 仍仅用于 Dev live。
+
+报告记录两版独立指标与各自分母，以及共同 PASS/FAIL/REVIEW、v2 REVIEW → v3 PASS/FAIL、
+v3 新增 REVIEW、其他评分差异和共同 N/A。v2 三态由其现有检查/原因解释，不改 v2 原布尔成绩。
+这种比较隔离了重新运行模型的随机变化；评分合同改变不能描述为 Agent 能力提升。
+
+报告还记录 Validator Version、Production Agent 源代码指纹、Dataset Manifest SHA-256、Split、
+指标、Review Counts、Trigger Reasons 和安全分支汇总。源代码指纹不代表完整部署、依赖或
+模型版本。旧报告一律不覆盖，旧诊断不能还原原始回答用于重算。
+
+首次完整 Dev v3 live（30 条、无筛选；本次没有执行），在 `services/framework-agent` 下：
+
+```bash
+PYTHONPATH=. .venv/bin/python -m evals.tool_replanning.runner \
+  --split dev --validator-version 3 --shadow-validator-version 2 \
+  --diagnose-dev --live-model --confirm-live \
+  --report evals/tool_replanning/reports/dev-live-validator-v3.md
+```
+
+该命令访问 Qwen，但只使用本地菜单 fixture，不调用远程 Gateway/uniCloud/数据库。
+Dev loader 只读 Dev 与 manifest，不读取 Holdout。应先在 Dev 验证评分合同，再冻结；
+不得读取 Holdout 调整规则，也不得用 v3 重写历史 v1/v2 成绩。
