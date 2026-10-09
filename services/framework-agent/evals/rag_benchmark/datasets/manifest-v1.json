@@ -1,0 +1,28 @@
+{
+  "benchmark": "rag-retrieval-grounding-benchmark-v1",
+  "version": 1,
+  "counts": {
+    "dev": 30,
+    "holdout": 10
+  },
+  "categoryCounts": {
+    "direct_fact": 8,
+    "paraphrase": 7,
+    "multi_evidence": 6,
+    "similar_dish": 5,
+    "unsupported_inference": 5,
+    "out_of_scope": 4,
+    "live_fact_boundary": 5
+  },
+  "embeddingModel": "qwen3.7-text-embedding-flash",
+  "embeddingDimension": 512,
+  "topK": 3,
+  "knowledgeCount": 21,
+  "sourceSha256": "f341c287c97056b4766fd514532de31fc8a2b5cd0a3e76641283192fcd04f0a6",
+  "sha256": {
+    "datasets/dev.jsonl": "e3f0cb829a0f6bd77a7a44671319550cb0a149e2d3721edde194003e7e8bd81b",
+    "datasets/holdout.jsonl": "db380d9ce60c156e589c3ab0b0a8c4745d4f0bd51e812e95c342105c723f67c9",
+    "fixtures/knowledge.json": "f341c287c97056b4766fd514532de31fc8a2b5cd0a3e76641283192fcd04f0a6",
+    "fixtures/dishes.json": "109c05d5e05134cfd049201edc11913a65e5a23f7e13e7d3e3148550eb018a6a"
+  }
+}
