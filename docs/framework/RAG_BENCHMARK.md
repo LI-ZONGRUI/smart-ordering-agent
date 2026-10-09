@@ -198,7 +198,8 @@ PYTHONPATH=. .venv/bin/python -m evals.rag_benchmark.runner \
 不调用 Gateway / uniCloud，不写数据库。
 
 未来正式 Holdout 需要额外 `--split holdout --confirm-holdout`；live 同时要求 `--live-model --confirm-live`。
-无确认在加载数据前拒绝。当前未运行 Holdout，也没有真实 Dev 结果，不填性能数字。
+无确认在加载数据前拒绝。首次 Dev live 已完成，结果保留于 `dev-generation-live-v1.md`；
+当前未运行 Holdout。基础设施自测与真实 Dev 结果分开记录。
 已有报告不可覆盖，report 路径限制在本 Benchmark reports 或 .local 中。
 
 ## 安全观测与回归
@@ -222,6 +223,88 @@ uv lock --check --offline
 新 Holdout 的程序化 freeze 测试只检查完整性，不输出或运行任何 query。
 
 本阶段没有优化生产 RAG，没有声称 benchmark 自测通过等于模型准确率提升。
+
+## Safe Observability v2（Dev only）
+
+首次 Dev 的一条 REVIEW 没有保留失败阶段。旧链路将生产错误、子进程失败、
+超时及输出解析错误合并处理，Generation 失败也会丢失先前已成功的检索。
+历史报告不改写；新增诊断不能倒推旧运行的真实失败原因。
+
+新增 `observability.py`，只在 Dev 报告附加安全诊断；`validatorVersion=1` 保持不变，
+新增 `observabilityVersion=2`。Validators、Metrics、Golden、知识与生产源码不变。
+
+### 阶段、超时与已完成检索
+
+- `QUERY_EMBEDDING`：确定的配置、请求、HTTP 或向量响应错误。
+- `RETRIEVAL`：确定的候选读取、索引数据或空集合错误。
+- `GENERATION_REQUEST`：确定的生成配置、请求或 HTTP 错误。
+- `GENERATION_VALIDATION`：确定的生成响应、ID 或生成后实时事实复核错误。
+- `BRIDGE_PROCESS`：父进程能确定的启动、非零退出或输出协议错误。
+- `TIMEOUT`：实际 HTTP `TimeoutError` 或 Python `TimeoutExpired`，另记录
+  `timeoutScope`（HTTP_REQUEST / BRIDGE_PROCESS）与可确认的 `failedOperation`。
+- `UNKNOWN`：无法可靠定位，不根据异常文本或 case 问法猜测。
+- `NONE`：成功。错误类别也只使用固定枚举，不返回原始异常。
+
+Python 每 case 总超时仍是 100 秒；Bridge fetch 每请求仍是 40 秒。
+生产的 `[5000,15000]` / `[5000,30000]` 超时数组在此 fetch 适配器中仍未生效；
+本次仅解释这个边界，不修改任何超时策略。父进程超时不能推断卡在 Embedding 还是 Generation。
+耗时仅记录固定区间：小于 1 秒、1～5、5～15、15～40、40～100、至少 100 秒；
+旧 observation 无耗时记录时明确为 NOT_OBSERVED。
+
+Bridge 首先复用生产 `retrieveQuery`，成功后只发出含 `rank / knowledgeId / similarity`
+的单行 checkpoint。随后继续调用完整生产 `answerQuery`。
+它的内部检索复用本 case 内存中刚取得的真实 Embedding 响应，并再次运行相同生产检索，
+输入是同一份冻结本地索引；不生成假向量，不复制 cosine，不额外发送 Embedding 请求。
+每 case 仍至多一次真实 Embedding 请求、一次真实 Generation 请求，没有重试或新的模型调用。
+HTTP 响应和向量只在内存中使用，不进入 checkpoint、报告或磁盘。
+
+Generation 失败时保留检索 checkpoint，不返回 generation/answer，仍是 `status:error`。
+父进程非零退出、协议解析失败或 100 秒超时，也可从已完整收到的 checkpoint 恢复 Top-3。
+没有 checkpoint 时不伪造检索。`retrievalCompleted` 与 `generationState` 分开记录；
+父进程只收到 checkpoint 时，Generation 是否开始仍未知，标记 NOT_OBSERVED。
+
+评分公式和 applicable 分母不变。新增观测可能让以前“检索未观测”的 case 获得真实检索评分，
+但不会将失败的 Generation 算作成功，也不会剔除其 REVIEW 分母。
+
+### Evidence Selection 诊断
+
+Dev 报告附加：
+
+- requiredKnowledgeIds、requiredEvidenceGroups
+- retrievedKnowledgeIds、usedKnowledgeIds
+- missingRequiredEvidenceGroups、missingRequiredKnowledgeIds（检索阶段）
+- missingSelectedEvidenceGroups（选择阶段）
+- extraSelectedKnowledgeIds（选中但不在 Golden relevant 集合）
+
+**每组只需一个合法替代证据，不要求组内全部 ID。** requiredKnowledgeIds 是各组候选 ID 的并集；
+missingRequiredKnowledgeIds 是未满足组的候选 ID 并集，必须结合 groups 阅读，
+不能把其中每个替代 ID 当成独立的必需证据。观测缺失时 missing/extra 为 null，
+区别于“确实观察到且没有缺失”的空数组。
+
+`rag_dev_multi_evidence_001` 的两个单元素必需组是 taste、ingredients；
+原报告 Top-3 缺少 `dish-1-taste`，诊断应显示缺失 taste，同时单独列出额外选择的 description。
+合法证据的选择顺序保持原样，不影响 required group 的集合覆盖检查。
+
+原 `EVIDENCE_SELECTION_MISS` 合同保持不变。六条 over-selection 继续按原合同评分；
+**Over-selection 不等于 Unsupported Claim**。Golden 范围外的知识可能具有产品相关性，
+诊断不把它自动称为无关信息或幻觉。
+
+### 下一次 Dev 诊断
+
+在 `services/framework-agent`，沿用已核验的本地真实索引与已有进程环境变量：
+
+```bash
+PYTHONPATH=. .venv/bin/python -m evals.rag_benchmark.runner \
+  --split dev --mode live-generation --live-model --confirm-live \
+  --index-fixture evals/rag_benchmark/.local/knowledge-index.json \
+  --index-manifest evals/rag_benchmark/.local/knowledge-index-manifest.json \
+  --report evals/rag_benchmark/reports/dev-generation-live-observability-v2.md
+```
+
+这是新运行，不能冒充首次 Dev v1。若报告文件已存在，换新文件名，不覆盖历史。
+本次开发没有执行上述命令，没有调用模型或远程数据库，没有访问 Holdout。
+报告不保存 Query、answer、Prompt、完整 evidence 文本、provider response、reasoning、
+完整向量、凭证或真实个人信息；本地索引继续留在 Git ignored `.local/`。
 
 ### 本次离线验证结果
 

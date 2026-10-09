@@ -43,5 +43,9 @@ def render(metadata: dict[str, Any], summary: dict[str, Any], results: list[dict
                 "contextSupported",
             )
         }
+        # Only locally constructed, whitelisted diagnostic fields; never serialize observation.
+        for key in ("diagnostics", "evidenceSelection"):
+            if key in r:
+                safe[key] = r[key]
         lines += ["```json", json.dumps(safe, ensure_ascii=False, indent=2), "```", ""]
     return "\n".join(lines) + "\n"

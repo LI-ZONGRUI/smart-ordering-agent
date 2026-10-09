@@ -7,10 +7,17 @@ import hashlib
 import json
 import os
 import subprocess
+import time
 from pathlib import Path
 from typing import Any
 
 from evals.rag_benchmark.metrics import summarize
+from evals.rag_benchmark.observability import (
+    enrich_dev_result,
+    process_failure,
+    safe_checkpoint,
+    validate_diagnostics,
+)
 from evals.rag_benchmark.report import render
 from evals.rag_benchmark.schema import (
     BASE,
@@ -75,10 +82,13 @@ def validate_observation(row: Any) -> dict[str, Any]:
         "retrieval",
         "generation",
         "errorCode",
+        "diagnostics",
     }:
         raise BenchmarkError("Observation schema invalid; vectors and raw responses are forbidden.")
     if row.get("status") not in {"ok", "error"}:
         raise BenchmarkError("Observation status invalid.")
+    if "diagnostics" in row:
+        validate_diagnostics(row["diagnostics"])
     # Ignore arbitrary upstream error strings: public report only records fixed failure categories.
     if "retrieval" in row:
         if not isinstance(row["retrieval"], list):
@@ -123,6 +133,28 @@ def fingerprint() -> str:
     return h.hexdigest()
 
 
+def checkpoint_from_output(output: str | bytes | None) -> list[dict[str, Any]] | None:
+    if isinstance(output, bytes):
+        output = output.decode("utf-8", errors="replace")
+    if not isinstance(output, str) or len(output) > 1_000_000:
+        return None
+    checkpoint = None
+    for line in output.splitlines():
+        try:
+            value = json.loads(line)
+        except ValueError:
+            continue  # A killed process may leave a partial last line.
+        if (
+            isinstance(value, dict)
+            and set(value) == {"kind", "retrieval"}
+            and value["kind"] == "retrieval_checkpoint"
+        ):
+            safe = safe_checkpoint(value["retrieval"])
+            if safe is not None:
+                checkpoint = safe
+    return checkpoint
+
+
 def invoke_live(case: dict[str, Any], records: list[dict[str, Any]], mode: str) -> dict[str, Any]:
     # Deliberately omit expected labels and case history: no oracle feeds production execution.
     payload = {
@@ -131,6 +163,8 @@ def invoke_live(case: dict[str, Any], records: list[dict[str, Any]], mode: str) 
         "records": records,
         "dishes": live_dishes(case["liveProfile"]),
     }
+    started = time.monotonic()
+    checkpoint = None
     try:
         child = subprocess.run(
             ["node", str(BASE / "bridge.cjs"), "--confirm-live"],
@@ -140,11 +174,32 @@ def invoke_live(case: dict[str, Any], records: list[dict[str, Any]], mode: str) 
             timeout=100,
             check=False,
         )
+        checkpoint = checkpoint_from_output(child.stdout)
         if child.returncode != 0:
-            return {"status": "error"}
-        return validate_observation(json.loads(child.stdout))
-    except (OSError, subprocess.TimeoutExpired, ValueError):
-        return {"status": "error"}
+            return process_failure(
+                "BRIDGE_PROCESS", "PROCESS_EXIT", time.monotonic() - started, checkpoint
+            )
+        # New bridge uses checkpoint + final JSON; legacy single JSON remains accepted.
+        lines = child.stdout.strip().splitlines()
+        observation = validate_observation(json.loads(lines[-1]))
+        if checkpoint and "retrieval" not in observation:
+            observation["retrieval"] = checkpoint
+            if "diagnostics" in observation:
+                observation["diagnostics"]["retrievalCompleted"] = True
+        return observation
+    except subprocess.TimeoutExpired as error:
+        return process_failure(
+            "TIMEOUT",
+            "TIMEOUT",
+            time.monotonic() - started,
+            checkpoint_from_output(error.stdout),
+        )
+    except OSError:
+        return process_failure("BRIDGE_PROCESS", "PROCESS_START_FAILED", time.monotonic() - started)
+    except (ValueError, IndexError):
+        return process_failure(
+            "BRIDGE_PROCESS", "OUTPUT_INVALID", time.monotonic() - started, checkpoint
+        )
 
 
 def run(args: argparse.Namespace) -> dict[str, Any]:
@@ -184,18 +239,18 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
         observation = (
             invoke_live(case, records, args.mode) if live else observations.get(case["id"], {})
         )
-        results.append(
-            evaluate_case(
-                case,
-                observation,
-                retrieval_measured=live,
-                generation_measured=args.mode in {"live-generation", "supplied-observations"},
-            )
+        scored = evaluate_case(
+            case,
+            observation,
+            retrieval_measured=live,
+            generation_measured=args.mode in {"live-generation", "supplied-observations"},
         )
+        results.append(enrich_dev_result(case, observation, scored))
     manifest = json.loads(MANIFEST.read_text())
     metadata = {
         "benchmarkVersion": 1,
         "validatorVersion": 1,
+        "observabilityVersion": 2,
         "mode": args.mode,
         "split": args.split,
         "casesInScope": len(cases),
