@@ -145,6 +145,9 @@ CLI 不生成 oracle observation，也不保存答案。提供者若手工创建
 
 ### 准备真实检索输入
 
+已新增纯本地 `evals.rag_benchmark.prepare_index` 工具，检查完整控制台导出并生成兼容 runner 的索引与 manifest。
+工具不连接云数据库、不计算 Embedding、不修改生产；真实导出尚待用户提供。步骤与限制见 [RAG_INDEX_PREPARATION.md](./RAG_INDEX_PREPARATION.md)。
+
 本阶段没有调用/导出云数据库，也没有现成经过核验的完整真实向量。
 首次 live 前，需你单独从现有 knowledge_chunks 导出 21 条审核过的记录到本地：
 
