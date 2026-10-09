@@ -7,14 +7,7 @@ import unicodedata
 from collections import Counter
 from typing import Any
 
-from evals.tool_replanning.answer_checks import (
-    analyze_answer,
-    forbidden_phrase_check,
-    required_group_hits,
-)
 from evals.tool_replanning.schema import READ_ONLY_TOOLS, ToolBenchmarkError, validate_observation
-
-VALIDATOR_VERSION = 2
 
 FAILURES = frozenset(
     {
@@ -263,8 +256,52 @@ def _observed_names(results: list[dict[str, Any]]) -> list[str]:
 
 
 def _tool_results_not_contradicted(trace: list[dict[str, Any]], answer: str) -> bool:
-    # Kept for diagnostic compatibility. Indeterminate is deliberately not a pass.
-    return analyze_answer(trace, answer)["consistency"] == "pass"
+    all_names = _observed_names([event for event in trace if event["eventType"] == "tool_result"])
+    for index, event in enumerate(trace):
+        if event["eventType"] != "tool_result":
+            continue
+        summary = event["summary"]
+        values: list[dict[str, Any]] = []
+        if isinstance(summary.get("items"), list):
+            values.extend(item for item in summary["items"] if isinstance(item, dict))
+        if isinstance(summary.get("item"), dict):
+            values.append(summary["item"])
+        for item in values:
+            name = item.get("name")
+            if not isinstance(name, str) or name not in answer:
+                continue
+            # Compare facts in the clause belonging to this item, not the whole mixed-item answer.
+            active_name = None
+            for clause in re.split(r"[，,。；;\n、]", answer):
+                mentioned = {candidate for candidate in all_names if candidate in clause}
+                if mentioned:
+                    active_name = next(iter(mentioned)) if len(mentioned) == 1 else None
+                if active_name != name:
+                    continue
+                status = item.get("status")
+                if status == "on_sale" and re.search(r"(?<!未)(?<!不)(?<!没有)已售罄", clause):
+                    return False
+                if status == "sold_out" and re.search(r"(?<!不)(?<!未)(?<!非)在售", clause):
+                    return False
+                # Explicit single-item price claims only; total-price arithmetic is a separate task.
+                if not any(word in clause for word in ("合计", "总共", "总价", "两杯", "两份")):
+                    prices = re.findall(r"(?:单价|价格|售价)?\s*(\d+(?:\.\d+)?)\s*元", clause)
+                    if any(float(price) != item.get("price") for price in prices):
+                        return False
+        if event["toolName"] == "search_menu" and event["resultClass"] == "empty":
+            prior_calls = [
+                candidate
+                for candidate in trace[:index]
+                if candidate["eventType"] == "assistant_tool_call"
+                and candidate["toolName"] == "search_menu"
+            ]
+            query = prior_calls[-1]["arguments"].get("query") if prior_calls else None
+            if isinstance(query, str) and any(
+                phrase in normalize_text(answer)
+                for phrase in (f"有{normalize_text(query)}", f"{normalize_text(query)}在售")
+            ):
+                return False
+    return True
 
 
 def _result_usage_consistent(
@@ -288,19 +325,15 @@ def _result_usage_consistent(
             event["resultClass"] in {"safe_error", "missing", "invalid"} for event in results
         )
     if mode == "report_empty_cautiously":
-        return any(event["resultClass"] == "empty" for event in results) and (
-            analyze_answer(trace, answer)["emptySearchCheck"] == "pass"
+        return any(event["resultClass"] == "empty" for event in results) and any(
+            term in answer for term in ("没查到", "未查到", "没有查到", "未找到", "没有找到")
         )
     names = _observed_names(results)
     if mode == "recommend_observed_item_after_empty":
         has_empty = any(event["resultClass"] == "empty" for event in results)
         return has_empty and bool(names) and any(name in answer for name in names)
     if mode in {"report_observed_item", "report_observed_detail"}:
-        return (
-            bool(names)
-            and any(name in answer for name in names)
-            and analyze_answer(trace, answer)["keyFactsReferenced"]
-        )
+        return bool(names) and any(name in answer for name in names)
     return False
 
 
@@ -309,11 +342,9 @@ def _final_meaning_consistent(trace: list[dict[str, Any]], expectation: dict[str
     if final is None or final["completed"] is not True:
         return False
     answer = final["answer"]
-    required = all(
-        required_group_hits(answer, expectation["requiredAny"], analyze_answer(trace, answer))
-    )
-    forbidden, uncertain = forbidden_phrase_check(answer, expectation["forbidden"])
-    return required and not forbidden and not uncertain
+    required = all(any(term in answer for term in group) for group in expectation["requiredAny"])
+    forbidden = any(term in answer for term in expectation["forbidden"])
+    return required and not forbidden
 
 
 def _expected_call_names(expected: dict[str, Any]) -> list[str]:
@@ -323,146 +354,6 @@ def _expected_call_names(expected: dict[str, Any]) -> list[str]:
         if event == "assistant_tool_call" and separator:
             names.append(tool_name)
     return names
-
-
-def _extra_call_audit(case: dict[str, Any], trace: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    """Explain strict budget violations without changing their score or guessing necessity."""
-
-    budget = Counter(_expected_call_names(case["expected"]))
-    seen: Counter[str] = Counter()
-    calls = [event for event in trace if event["eventType"] == "assistant_tool_call"]
-    details_needed = bool(re.search(r"配料|原料|成分|含|做的", case["query"]))
-    audits = []
-    for index, event in enumerate(trace):
-        if event["eventType"] != "assistant_tool_call" or event["toolName"] not in READ_ONLY_TOOLS:
-            continue
-        tool = event["toolName"]
-        seen[tool] += 1
-        if seen[tool] <= budget[tool]:
-            continue
-        preceding = trace[:index]
-        searches = [
-            candidate
-            for candidate in preceding
-            if candidate["eventType"] == "tool_result"
-            and candidate["toolName"] == "search_menu"
-            and candidate["resultClass"] == "success"
-        ]
-        target = event["arguments"].get("dish_id")
-        dependency = (
-            any(
-                candidate["step"] < event["step"]
-                and any(
-                    item.get("dishId") == target for item in candidate["summary"].get("items", [])
-                )
-                for candidate in searches
-            )
-            if tool == "get_dish_detail"
-            else False
-        )
-        detail_result_matches = (
-            any(
-                candidate["eventType"] == "tool_result"
-                and candidate["toolName"] == tool
-                and candidate["step"] == event["step"]
-                and candidate["summary"].get("found") is True
-                and candidate["summary"].get("item", {}).get("dishId") == target
-                for candidate in trace[index + 1 :]
-            )
-            if tool == "get_dish_detail"
-            else False
-        )
-        repeated = any(
-            candidate["eventType"] == "assistant_tool_call"
-            and candidate["toolName"] == tool
-            and candidate["arguments"] == event["arguments"]
-            for candidate in preceding
-        )
-        candidate = (
-            tool == "get_dish_detail"
-            and details_needed
-            and dependency
-            and detail_result_matches
-            and not repeated
-            and len(calls) <= 3
-        )
-        audits.append(
-            {
-                "toolName": tool,
-                "decisionStep": event["step"],
-                "detailFieldsRequested": details_needed,
-                "searchResultDependency": dependency,
-                "detailResultMatchesTarget": detail_result_matches,
-                "repeatedArguments": repeated,
-                "withinReviewBudget": len(calls) <= 3,
-                "assessment": "DATA_DEPENDENT_DETAIL_CANDIDATE"
-                if candidate
-                else "REPEATED_TOOL_CALL"
-                if repeated
-                else "TOOL_BUDGET_EXCEEDED"
-                if len(calls) > 3
-                else "EXTRA_CALL_NEEDS_REVIEW",
-            }
-        )
-    return audits
-
-
-def _validation_details(
-    case: dict[str, Any], trace: list[dict[str, Any]], *, safe_abort: bool
-) -> dict[str, Any]:
-    final = _final_event(trace)
-    reasons: set[str] = set()
-    analysis = (
-        analyze_answer(trace, final["answer"])
-        if final
-        else {
-            "consistency": "not_observed",
-            "entityMentioned": False,
-            "keyFactsReferenced": False,
-            "reasons": [],
-        }
-    )
-    if final:
-        reasons.update(analysis["reasons"])
-        meaning = case["expected"]["allowedFinalMeaning"]
-        if not all(required_group_hits(final["answer"], meaning["requiredAny"], analysis)):
-            reasons.add("REQUIRED_KEYWORD_MISSING")
-        forbidden, uncertain = forbidden_phrase_check(final["answer"], meaning["forbidden"])
-        if forbidden:
-            reasons.add("FORBIDDEN_PHRASE_MATCH")
-        if uncertain:
-            reasons.add("INDETERMINATE_SEMANTIC_CHECK")
-        usage = case["expected"]["expectedResultUsage"]["mode"]
-        if (
-            usage
-            in {
-                "report_observed_item",
-                "report_observed_detail",
-                "recommend_observed_item_after_empty",
-            }
-            and not analysis["entityMentioned"]
-        ):
-            reasons.add("ENTITY_REFERENCE_MISSING")
-    elif not safe_abort:
-        reasons.add("INDETERMINATE_SEMANTIC_CHECK")
-    audits = _extra_call_audit(case, trace)
-    return {
-        "answerChecks": analysis,
-        "failureReasons": sorted(reasons),
-        "extraCallAudit": audits,
-        "requiresHumanReview": bool(
-            reasons
-            & {
-                "INDETERMINATE_SEMANTIC_CHECK",
-                "ENTITY_REFERENCE_MISSING",
-                "REQUIRED_KEYWORD_MISSING",
-            }
-        )
-        or any(
-            audit["assessment"] in {"DATA_DEPENDENT_DETAIL_CANDIDATE", "EXTRA_CALL_NEEDS_REVIEW"}
-            for audit in audits
-        ),
-    }
 
 
 def evaluate_case(case: dict[str, Any], observation: dict[str, Any]) -> dict[str, Any]:
@@ -602,27 +493,15 @@ def evaluate_case(case: dict[str, Any], observation: dict[str, Any]) -> dict[str
         failures.append("FINAL_ANSWER_CONTRADICTS_TOOL")
     if observation.get("modelOutputInvalid") is True:
         failures.append("MODEL_OUTPUT_INVALID")
-    return _result(
-        case, metrics, failures, _validation_details(case, trace, safe_abort=expected_safe_abort)
-    )
+    return _result(case, metrics, failures)
 
 
 def _result(
-    case: dict[str, Any],
-    metrics: dict[str, bool | None],
-    failures: list[str],
-    details: dict[str, Any] | None = None,
+    case: dict[str, Any], metrics: dict[str, bool | None], failures: list[str]
 ) -> dict[str, Any]:
     unique = list(dict.fromkeys(failures))
     if any(item not in FAILURES for item in unique):
         raise AssertionError("unknown failure taxonomy")
-    if details is None:
-        details = {
-            "failureReasons": ["INDETERMINATE_SEMANTIC_CHECK"],
-            "requiresHumanReview": True,
-            "answerChecks": {"consistency": "indeterminate"},
-            "extraCallAudit": [],
-        }
     return {
         "id": case["id"],
         "category": case["category"],
@@ -630,6 +509,4 @@ def _result(
         "metrics": metrics,
         "failures": unique,
         "primaryFailure": unique[0] if unique else None,
-        "validatorVersion": VALIDATOR_VERSION,
-        **details,
     }

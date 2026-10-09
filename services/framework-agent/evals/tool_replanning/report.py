@@ -23,6 +23,8 @@ def render_report(
     mode: str,
     split: str,
     executed_at: str | None = None,
+    validator_version: int = 2,
+    agent_source_hash: str | None = None,
 ) -> str:
     categories = Counter(case["category"] for case in cases)
     failures = failure_distribution(results)
@@ -32,6 +34,8 @@ def render_report(
         "",
         f"- Mode: `{mode}`",
         f"- Split: `{split}`",
+        f"- Validator version: `{validator_version}`",
+        f"- Production Agent source fingerprint: `{agent_source_hash or 'not captured'}`",
         f"- Generated at: `{executed_at or datetime.now(UTC).isoformat()}`",
         f"- Cases in scope: {len(cases)}",
         f"- Cases evaluated: {len(results)}",
@@ -63,4 +67,27 @@ def render_report(
             "",
         ]
     )
+    if validator_version == 2:
+        reasons: Counter[str] = Counter()
+        for result in results:
+            reasons.update(result.get("failureReasons", []))
+        review_count = sum(result.get("requiresHumanReview") is True for result in results)
+        lines.extend(
+            [
+                "## Validator v2 review diagnostics",
+                "",
+                f"- Cases requiring human review: {review_count}/{len(results)}",
+                "- Trigger reasons: "
+                + (", ".join(f"{key}={value}" for key, value in sorted(reasons.items())) or "none"),
+                "- Indeterminate eligible answer checks count as failed, not N/A; "
+                "denominators are unchanged.",
+                "- Utilization and final consistency share fact checks; overlapping failures "
+                "are not independent Agent faults.",
+                "- Extra Tool calls still fail the frozen strict budget, including plausible "
+                "detail calls flagged for review.",
+                "- Changes from Validator v1 are scoring-contract corrections, "
+                "not proof of improved Agent capability.",
+                "",
+            ]
+        )
     return "\n".join(lines)

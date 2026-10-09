@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import hashlib
 import json
 from pathlib import Path
 from typing import Any
@@ -13,6 +14,7 @@ from evals.tool_replanning.report import render_report
 from evals.tool_replanning.schema import (
     DEV_DATASET,
     HOLDOUT_DATASET,
+    MANIFEST,
     ToolBenchmarkError,
     load_jsonl,
     validate_dataset,
@@ -20,7 +22,7 @@ from evals.tool_replanning.schema import (
 )
 from evals.tool_replanning.validators import evaluate_case
 
-DEFAULT_REPORT = Path(__file__).resolve().parent / "reports" / "dev-validation-v1.md"
+DEFAULT_REPORT = Path(__file__).resolve().parent / "reports" / "dev-validation-validator-v2.md"
 
 
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
@@ -34,8 +36,14 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--confirm-holdout", action="store_true")
     parser.add_argument("--diagnose-dev", action="store_true")
     parser.add_argument("--case-ids", nargs="+", metavar="DEV_CASE_ID")
-    parser.add_argument("--report", type=Path, default=DEFAULT_REPORT)
-    return parser.parse_args(argv)
+    parser.add_argument("--validator-version", type=int, choices=(1, 2), default=2)
+    parser.add_argument("--report", type=Path)
+    args = parser.parse_args(argv)
+    if args.report is None:
+        args.report = DEFAULT_REPORT.with_name(
+            f"{args.split}-validation-validator-v{args.validator_version}.md"
+        )
+    return args
 
 
 def validate_options(args: argparse.Namespace) -> None:
@@ -54,6 +62,8 @@ def validate_options(args: argparse.Namespace) -> None:
 
 
 def load_split(split: str) -> list[dict[str, Any]]:
+    if split == "dev":
+        return load_dev_diagnostic_cases(None)
     verify_frozen_artifacts()
     path = DEV_DATASET if split == "dev" else HOLDOUT_DATASET
     cases = load_jsonl(path)
@@ -67,6 +77,9 @@ def load_split(split: str) -> list[dict[str, Any]]:
 def load_dev_diagnostic_cases(case_ids: list[str] | None) -> list[dict[str, Any]]:
     """Load only the Dev fixture. The normal frozen check also opens Holdout, so skip it here."""
 
+    manifest = json.loads(MANIFEST.read_text(encoding="utf-8"))
+    if hashlib.sha256(DEV_DATASET.read_bytes()).hexdigest() != manifest["sha256"]["dev.jsonl"]:
+        raise ToolBenchmarkError("frozen Dev artifact changed")
     cases = load_jsonl(DEV_DATASET)
     validate_dataset(cases, enforce_totals=False)
     if len(cases) != 30 or any(case["split"] != "dev" for case in cases):
@@ -201,7 +214,7 @@ async def run_live(cases: list[dict[str, Any]]) -> list[dict[str, Any]]:
 
 
 def evaluate_observations(
-    cases: list[dict[str, Any]], observations: list[dict[str, Any]]
+    cases: list[dict[str, Any]], observations: list[dict[str, Any]], *, validator_version: int = 2
 ) -> list[dict[str, Any]]:
     by_id: dict[str, dict[str, Any]] = {}
     for observation in observations:
@@ -212,7 +225,25 @@ def evaluate_observations(
     unknown = set(by_id) - {case["id"] for case in cases}
     if unknown:
         raise ToolBenchmarkError("observations contain IDs outside the selected split")
-    return [evaluate_case(case, by_id[case["id"]]) for case in cases if case["id"] in by_id]
+    scorer = evaluate_case
+    if validator_version == 1:
+        from evals.tool_replanning.validators_v1 import evaluate_case as legacy_scorer
+
+        scorer = legacy_scorer
+    elif validator_version != 2:
+        raise ToolBenchmarkError("unsupported Validator version")
+    return [scorer(case, by_id[case["id"]]) for case in cases if case["id"] in by_id]
+
+
+def production_agent_source_hash() -> str:
+    """Fingerprint code only; never inspect settings, credentials or environment files."""
+
+    root = Path(__file__).resolve().parents[2]
+    digest = hashlib.sha256()
+    for name in ("app/agent.py", "app/tools/menu.py", "app/trace.py"):
+        digest.update(name.encode())
+        digest.update((root / name).read_bytes())
+    return digest.hexdigest()
 
 
 def main(argv: list[str] | None = None) -> None:
@@ -234,7 +265,7 @@ def main(argv: list[str] | None = None) -> None:
     else:
         observations = []
         mode = "validation-only"
-    results = evaluate_observations(cases, observations)
+    results = evaluate_observations(cases, observations, validator_version=args.validator_version)
     diagnostic_path = None
     if args.diagnose_dev:
         from evals.tool_replanning.diagnostics import (
@@ -251,6 +282,8 @@ def main(argv: list[str] | None = None) -> None:
         metrics=aggregate_metrics(results),
         mode=mode,
         split=args.split,
+        validator_version=args.validator_version,
+        agent_source_hash=production_agent_source_hash(),
     )
     args.report.parent.mkdir(parents=True, exist_ok=True)
     args.report.write_text(report, encoding="utf-8")

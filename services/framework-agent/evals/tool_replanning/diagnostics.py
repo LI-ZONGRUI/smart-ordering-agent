@@ -9,6 +9,12 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
+from evals.tool_replanning.answer_checks import (
+    FAILURE_REASONS,
+    analyze_answer,
+    forbidden_phrase_check,
+    required_group_hits,
+)
 from evals.tool_replanning.schema import READ_ONLY_TOOLS, ToolBenchmarkError
 from evals.tool_replanning.validators import (
     _final_event,
@@ -115,7 +121,9 @@ def _safe_event(case: dict[str, Any], event: Any) -> dict[str, Any]:
     return safe
 
 
-def _answer_diagnostic(case: dict[str, Any], trace: list[dict[str, Any]]) -> dict[str, Any]:
+def _answer_diagnostic(
+    case: dict[str, Any], trace: list[dict[str, Any]], *, validator_version: int = 2
+) -> dict[str, Any]:
     final = _final_event(trace) if all(isinstance(event, dict) for event in trace) else None
     answer = final.get("answer") if final else None
     if not isinstance(answer, str):
@@ -129,7 +137,14 @@ def _answer_diagnostic(case: dict[str, Any], trace: list[dict[str, Any]]) -> dic
         else []
     )
     try:
-        contradiction_passed = _tool_results_not_contradicted(trace, answer)
+        checker = _tool_results_not_contradicted
+        if validator_version == 1:
+            from evals.tool_replanning.validators_v1 import (
+                _tool_results_not_contradicted as legacy_checker,
+            )
+
+            checker = legacy_checker
+        contradiction_passed = checker(trace, answer)
     except (KeyError, TypeError, ValueError):
         contradiction_passed = None
     return {
@@ -141,10 +156,54 @@ def _answer_diagnostic(case: dict[str, Any], trace: list[dict[str, Any]]) -> dic
             phrase in answer for phrase in ("这款", "这杯", "这个", "它", "该菜")
         ),
         "observedNameMentioned": any(name in answer for name in names),
-        "requiredGroupHits": [any(term in answer for term in group) for group in groups],
-        "forbiddenGroupHit": any(term in answer for term in forbidden),
+        "literalRequiredGroupHits": [any(term in answer for term in group) for group in groups],
+        "requiredGroupHits": (
+            [any(term in answer for term in group) for group in groups]
+            if validator_version == 1
+            else required_group_hits(answer, groups, analyze_answer(trace, answer))
+        ),
+        "forbiddenGroupHit": (
+            any(term in answer for term in forbidden)
+            if validator_version == 1
+            else forbidden_phrase_check(answer, forbidden)[0]
+        ),
         "toolContradictionCheckPassed": contradiction_passed,
     }
+
+
+def _safe_extra_audits(audits: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    safe = []
+    for audit in audits:
+        safe.append(
+            {
+                "toolName": audit.get("toolName")
+                if audit.get("toolName") in READ_ONLY_TOOLS
+                else "<unauthorized>",
+                "decisionStep": audit.get("decisionStep")
+                if type(audit.get("decisionStep")) is int
+                else None,
+                **{
+                    key: audit.get(key) is True
+                    for key in (
+                        "detailFieldsRequested",
+                        "searchResultDependency",
+                        "detailResultMatchesTarget",
+                        "repeatedArguments",
+                        "withinReviewBudget",
+                    )
+                },
+                "assessment": audit.get("assessment")
+                if audit.get("assessment")
+                in {
+                    "DATA_DEPENDENT_DETAIL_CANDIDATE",
+                    "REPEATED_TOOL_CALL",
+                    "TOOL_BUDGET_EXCEEDED",
+                    "EXTRA_CALL_NEEDS_REVIEW",
+                }
+                else "EXTRA_CALL_NEEDS_REVIEW",
+            }
+        )
+    return safe
 
 
 def build_dev_diagnostic(
@@ -182,7 +241,30 @@ def build_dev_diagnostic(
                     for name, value in result["metrics"].items()
                 ],
                 "failureCodes": list(result["failures"]),
-                "answerDiagnostic": _answer_diagnostic(case, trace),
+                "validatorVersion": result.get("validatorVersion", 1),
+                "validatorTriggers": [
+                    reason
+                    for reason in result.get("failureReasons", [])
+                    if reason in FAILURE_REASONS
+                ],
+                "requiresHumanReview": result.get("requiresHumanReview") is True,
+                "answerChecks": {
+                    key: value
+                    for key, value in result.get("answerChecks", {}).items()
+                    if key
+                    in {
+                        "consistency",
+                        "entityMentioned",
+                        "keyFactsReferenced",
+                        "statusCheck",
+                        "priceCheck",
+                        "emptySearchCheck",
+                    }
+                },
+                "extraCallAudit": _safe_extra_audits(result.get("extraCallAudit", [])),
+                "answerDiagnostic": _answer_diagnostic(
+                    case, trace, validator_version=result.get("validatorVersion", 1)
+                ),
             }
         )
     if len(entries) != len(cases) or len({entry["caseId"] for entry in entries}) != len(entries):

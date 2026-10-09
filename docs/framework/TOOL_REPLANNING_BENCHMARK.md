@@ -171,7 +171,7 @@ PYTHONPATH=. .venv/bin/python -m evals.tool_replanning.runner \
 ```
 
 Live 模式只使用本地 `InMemoryMenuGateway` 固定数据，不访问远程 Gateway、uniCloud 或数据库。
-本阶段没有执行 Dev live，也没有执行 Holdout。
+初次建立 Benchmark 时尚未执行 Dev live。随后已完成 Dev live v1 与六条 Dev Diagnostic v2；本次 Validator v2 开发没有执行模型或 Holdout。
 
 `context.simulatedResultClass` 仅控制 Benchmark 本地 fixture 的故障响应；不会注入 expected
 标签或调用后续 Tool。safe_error 使用现有 Tool 的固定安全错误，invalid 使用无效响应，missing
@@ -201,6 +201,41 @@ PYTHONPATH=. .venv/bin/python -m evals.tool_replanning.runner \
 诊断 JSON 自动保存在 `evals/tool_replanning/.local/`，目录权限为 `0700`、文件为 `0600`，且被 Git 忽略。逐案保存事件顺序、决策 step、三个白名单 Tool 名、与 Dev expected 匹配的安全参数、结果类别/数量/状态、未知 Tool 尝试、原指标的适用/通过情况及 failure codes。未知 Tool 参数和与 Dev expected 不符的参数会被丢弃或标记为已遮盖；不保存完整 Tool payload。
 
 模型最终回答**只在内存中交给原评分器**。诊断文件不保存回答原文，只记录固定短语命中、是否使用指代词、是否出现已观察菜名、各 expected 词组是否命中、禁用词是否命中、以及原有事实矛盾检查是否通过。这样可以定位“这款饮品已售罄”因缺少原样菜名而被字符串校验判失败的候选 false positive，也能比较“暂未查到”等同义措辞。它仍不能单凭这些信号证明自然语言语义正确；必要时需在受控本地会话里人工查看当次回答，不得把原文写入可提交报告。额外 Tool Call 可从逐案事件顺序及 `UNNECESSARY_TOOL_CALL` 同时观察，再结合用户原问题人工判断是否合理。
+
+## Validator v2：评分合同修复
+
+`datasets/` 仍为冻结的 Benchmark v1；Validator 的版本独立于数据集和 Production Agent 版本。Runner 默认使用 `--validator-version 2`，可显式选择 `--validator-version 1` 使用原样保留的 `validators_v1.py`。报告记录 Validator 版本，以及 `app/agent.py`、`app/tools/menu.py`、`app/trace.py` 的源代码指纹；该指纹用于识别本地生产代码，不代表完整云部署、模型或依赖版本。
+
+`dev-live-v1.md` 与 `dev-live-diagnostic-v2.md` 保持原样。后者文件名中的 v2 表示第二次诊断运行，其评分器仍是 Validator v1。诊断没有保存回答原文，不能用旧诊断的布尔特征还原回答或重新计算 v2 成绩。本阶段没有新的真实模型指标。未来分数变化应表述为“在修复后的评分合同下重新评估”，不能表述为 Agent 能力提升；模型再次运行也可能改变输出。
+
+v1 已证实的问题是：局部子串匹配把“不是在售”当成肯定在售，把“未发现有可乐在售的记录”中的“有可乐”当成肯定搜索结果；缺少菜名、命中禁词和事实矛盾还合并在同一粗粒度 failure code 中。
+
+v2 按标点、转折连接词划分子句，在同一谓词前识别有界否定范围；否定不会跨过无关子句。状态陈述、带元的价格陈述、空搜索结果描述分别检查。明确同时声称售罄和在售/可正常下单仍失败。搜索未命中不能证明餐厅绝对没有该商品；全局不存在或不可售的推断单独记录。对于明示“不代表”“不能据此认定”的非断言表达，不当作肯定事实。
+
+这不是通用中文语义解析器。条件句、双重否定、模糊说法、未解析币值、实体关联不清以及同一步多个搜索无法关联空结果时，记录 `INDETERMINATE_SEMANTIC_CHECK` 并要求人工复核。相关指标仍为 FAIL 并保留在原分母中，不通过扩大 N/A 范围提高成绩。已有安全工具异常中止的 N/A 规则保持不变。
+
+新增逐案原因：`STATUS_MISMATCH`、`PRICE_MISMATCH`、`EMPTY_RESULT_ASSERTION`、`REQUIRED_KEYWORD_MISSING`、`FORBIDDEN_PHRASE_MATCH`、`ENTITY_REFERENCE_MISSING`、`UNSUPPORTED_ABSOLUTE_CLAIM`、`INDETERMINATE_SEMANTIC_CHECK`，以及已返回实体被否认时的 `RESULT_ENTITY_MISMATCH`。保留旧 coarse failure codes 以兼容汇总。`FINAL_ANSWER_CONTRADICTS_TOOL` 仍可能表示词组未命中或无法判定，必须结合新原因解释，不能只凭它断言模型编造了事实。
+
+指标名称、分子/分母公式和 trace 指标没有改变，以下回答评分口径发生变化：
+
+- Tool Result Utilization 分别记录实体提及、有限规则识别的关键事实引用、事实一致性；单独出现菜名不再足以证明利用结果。明确矛盾或无法判定仍失败。
+- Final Answer Consistency 使用同一事实检查，加上 required/forbidden 检查。空搜索组接受已识别的保守同义表达，例如“暂未找到”“没有发现”；不会泛化接受任意改写。缺少菜名的指代回答可以状态一致，但实体/关键词检查仍失败并要求人工复核。
+- 两项回答指标共用事实检查，因此同一矛盾可产生两个 coarse failure codes，不能视为两个独立 Agent 故障。有限词法规则也不能证明整段回答具有完整 Grounding。
+
+额外 Tool Call 的严格冻结预算**没有放宽**。新审计检查：用户是否需要配料/详情、是否先收到搜索结果、是否在后续 decision step 查询搜索返回 ID、详情是否返回对应实体、是否重复参数、是否超过最多三次调用的保守复核范围。满足条件只标记 `DATA_DEPENDENT_DETAIL_CANDIDATE` 供人工复核，仍保留 `UNNECESSARY_TOOL_CALL` 和原预算评分；其他额外调用不会自动变成合理调用。三次调用仅是审计候选限制，不替代每条冻结 case 的预算。
+
+逐案 trigger reasons、事实检查状态与额外调用审计只追加到受保护的 `.local/` 诊断中；回答原文、reasoning、关联执行 ID 和完整 Tool payload 不保存。正式报告只添加 Validator 版本、代码指纹、原因汇总和人工复核 case 数量。诊断仍被 Git 忽略，目录/文件权限仍为 `0700`/`0600`。
+
+下一次完整 Dev live（30 条，无 case 筛选）可在 `services/framework-agent` 下执行：
+
+```bash
+PYTHONPATH=. .venv/bin/python -m evals.tool_replanning.runner \
+  --split dev --validator-version 2 --diagnose-dev \
+  --live-model --confirm-live \
+  --report evals/tool_replanning/reports/dev-live-validator-v2.md
+```
+
+Dev 路径校验 Dev JSONL 与 manifest 中的 Dev SHA-256，不打开 Holdout JSONL。报告必须使用新文件名，已有文件一律拒绝覆盖。此次开发只使用离线构造句、Fake Model 和 Dev regression，尚未执行上面的真实命令。
 
 ## 局限
 
