@@ -32,6 +32,8 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--live-model", action="store_true")
     parser.add_argument("--confirm-live", action="store_true")
     parser.add_argument("--confirm-holdout", action="store_true")
+    parser.add_argument("--diagnose-dev", action="store_true")
+    parser.add_argument("--case-ids", nargs="+", metavar="DEV_CASE_ID")
     parser.add_argument("--report", type=Path, default=DEFAULT_REPORT)
     return parser.parse_args(argv)
 
@@ -43,6 +45,12 @@ def validate_options(args: argparse.Namespace) -> None:
         raise SystemExit("Holdout is frozen and requires --confirm-holdout")
     if args.live_model and args.observations is not None:
         raise SystemExit("--live-model and --observations are mutually exclusive")
+    if args.diagnose_dev and args.split != "dev":
+        raise SystemExit("Dev diagnostics are forbidden on Holdout")
+    if args.case_ids and not args.diagnose_dev:
+        raise SystemExit("--case-ids requires --diagnose-dev")
+    if args.diagnose_dev and (not args.live_model or args.observations is not None):
+        raise SystemExit("--diagnose-dev requires --live-model and --confirm-live")
 
 
 def load_split(split: str) -> list[dict[str, Any]]:
@@ -54,6 +62,21 @@ def load_split(split: str) -> list[dict[str, Any]]:
     if len(cases) != expected_count or any(case["split"] != split for case in cases):
         raise ToolBenchmarkError(f"{split} split does not match frozen v1")
     return cases
+
+
+def load_dev_diagnostic_cases(case_ids: list[str] | None) -> list[dict[str, Any]]:
+    """Load only the Dev fixture. The normal frozen check also opens Holdout, so skip it here."""
+
+    cases = load_jsonl(DEV_DATASET)
+    validate_dataset(cases, enforce_totals=False)
+    if len(cases) != 30 or any(case["split"] != "dev" for case in cases):
+        raise ToolBenchmarkError("Dev split does not match frozen v1")
+    if case_ids is None:
+        return cases
+    if len(set(case_ids)) != len(case_ids) or set(case_ids) - {case["id"] for case in cases}:
+        raise ToolBenchmarkError("--case-ids must list unique Dev case IDs")
+    selected = set(case_ids)
+    return [case for case in cases if case["id"] in selected]
 
 
 def normalize_agent_trace(
@@ -199,7 +222,9 @@ def main(argv: list[str] | None = None) -> None:
     report_path = args.report.resolve()
     if report_path.suffix != ".md" or report_path.exists():
         raise SystemExit("Choose a new .md report path; existing artifacts are never overwritten")
-    cases = load_split(args.split)
+    cases = (
+        load_dev_diagnostic_cases(args.case_ids) if args.diagnose_dev else load_split(args.split)
+    )
     if args.live_model:
         observations = asyncio.run(run_live(cases))
         mode = "live-model-local-fixture"
@@ -210,6 +235,16 @@ def main(argv: list[str] | None = None) -> None:
         observations = []
         mode = "validation-only"
     results = evaluate_observations(cases, observations)
+    diagnostic_path = None
+    if args.diagnose_dev:
+        from evals.tool_replanning.diagnostics import (
+            build_dev_diagnostic,
+            write_private_diagnostic,
+        )
+
+        diagnostic_path = write_private_diagnostic(
+            build_dev_diagnostic(cases, observations, results)
+        )
     report = render_report(
         cases=cases,
         results=results,
@@ -226,6 +261,7 @@ def main(argv: list[str] | None = None) -> None:
                 "split": args.split,
                 "live": args.live_model,
                 "evaluated": len(results),
+                **({"privateDiagnostic": str(diagnostic_path)} if diagnostic_path else {}),
             },
             ensure_ascii=False,
         )

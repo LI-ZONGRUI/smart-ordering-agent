@@ -180,6 +180,28 @@ call/result 并标记 `termination=safe_tool_error`，不伪造 assistant_final�
 Final Answer Consistency 与模型 Tool Result Utilization 为 N/A，trace 和调用指标仍可检查。
 报告必须写入新的 `.md` 路径；不会覆盖既有报告、代码或冻结数据。
 
+## Dev 逐案诊断（显式开启）
+
+首次 Dev live v1 报告只保存汇总指标，无法恢复当时的模型回答或逐案 trace。后续诊断是**新的模型运行**，结果可能变化，不能用来冒充首次运行的根因。首次报告保持不变。
+
+在 `services/framework-agent` 下，确认本机已配置模型环境后，可只重新运行指定 Dev case：
+
+```bash
+PYTHONPATH=. .venv/bin/python -m evals.tool_replanning.runner \
+  --split dev --diagnose-dev \
+  --case-ids tool_single_tool_selection_002 tool_single_tool_selection_006 \
+    tool_single_tool_selection_007 tool_single_tool_selection_009 \
+    tool_tool_argument_accuracy_002 tool_tool_argument_accuracy_005 \
+  --live-model --confirm-live \
+  --report evals/tool_replanning/reports/dev-live-diagnostic-v2.md
+```
+
+`--diagnose-dev` 默认关闭；它只接受 Dev，不能与 Holdout 或外部 observation 文件合用。`--case-ids` 只能列 Dev ID。真实模型仍要求 `--live-model --confirm-live`。该模式专门加载并校验 Dev fixture，不读取 Holdout；普通 Runner 的冻结检查与原评分流程保持不变。请给每次运行选一个新的 `.md` 汇总报告路径。
+
+诊断 JSON 自动保存在 `evals/tool_replanning/.local/`，目录权限为 `0700`、文件为 `0600`，且被 Git 忽略。逐案保存事件顺序、决策 step、三个白名单 Tool 名、与 Dev expected 匹配的安全参数、结果类别/数量/状态、未知 Tool 尝试、原指标的适用/通过情况及 failure codes。未知 Tool 参数和与 Dev expected 不符的参数会被丢弃或标记为已遮盖；不保存完整 Tool payload。
+
+模型最终回答**只在内存中交给原评分器**。诊断文件不保存回答原文，只记录固定短语命中、是否使用指代词、是否出现已观察菜名、各 expected 词组是否命中、禁用词是否命中、以及原有事实矛盾检查是否通过。这样可以定位“这款饮品已售罄”因缺少原样菜名而被字符串校验判失败的候选 false positive，也能比较“暂未查到”等同义措辞。它仍不能单凭这些信号证明自然语言语义正确；必要时需在受控本地会话里人工查看当次回答，不得把原文写入可提交报告。额外 Tool Call 可从逐案事件顺序及 `UNNECESSARY_TOOL_CALL` 同时观察，再结合用户原问题人工判断是否合理。
+
 ## 局限
 
 - 40 条数据只能形成小型行为基线，不代表生产准确率。

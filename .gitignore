@@ -14,3 +14,6 @@ uniCloud-aliyun/cloudfunctions/**/node_modules/
 
 # HBuilderX 云函数本地运行参数，不作为业务源码提交
 uniCloud-aliyun/cloudfunctions/**/*.param.json
+
+# 本地 Dev Tool Benchmark 诊断；可能包含逐案行为信息，不提交
+services/framework-agent/evals/tool_replanning/.local/
